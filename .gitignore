@@ -1,0 +1,9 @@
+*.exe
+*.zip
+*.blockmap
+.tools/
+installer/
+win-unpacked/
+node_modules/
+dist/
+build/
