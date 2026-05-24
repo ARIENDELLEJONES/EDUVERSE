@@ -12,6 +12,8 @@ export function weightsToApiPayload(databaseId, weights = {}) {
     passFinal: Number(weights.pass_final ?? weights.passFinal ?? 0),
     passOverall: Number(weights.pass_overall ?? weights.passOverall ?? 0),
     freezeFinal: Boolean(weights.freeze_final ?? weights.freezeFinal ?? false),
-    customFormula: String(weights.custom_formula ?? weights.customFormula ?? '')
+    customFormula: String(weights.custom_formula ?? weights.customFormula ?? ''),
+    otherActivitiesMidterm: Number(weights.other_activities_midterm ?? weights.otherActivitiesMidterm ?? 0),
+    otherActivitiesFinal: Number(weights.other_activities_final ?? weights.otherActivitiesFinal ?? 0)
   };
 }

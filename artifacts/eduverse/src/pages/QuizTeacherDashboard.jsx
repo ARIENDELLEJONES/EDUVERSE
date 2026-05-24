@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { api, downloadFile } from '../api';
+import { api, downloadFile, uploadFile } from '../api';
 import { KahootHostView } from './KahootGame';
 import GradingSheetEditor from '../components/GradingSheetEditor';
 
@@ -15,13 +15,21 @@ const QUESTION_TYPES = [
 
 function StatusBadge({ status }) {
   const map = {
-    NOT_STARTED: { label: 'Not Started', cls: 'badge-warning' },
-    IN_PROGRESS: { label: 'In Progress', cls: 'badge-info' },
-    COMPLETED: { label: 'Completed', cls: 'badge-success' },
+    NOT_STARTED: { label: 'Logging in', cls: 'badge-warning' },
+    IN_PROGRESS: { label: 'Taking the exam', cls: 'badge-info' },
+    COMPLETED: { label: 'Finished', cls: 'badge-success' },
     BLOCKED: { label: 'Blocked', cls: 'badge-danger' },
   };
   const s = map[status] || { label: status, cls: 'badge-warning' };
   return <span className={`badge ${s.cls}`}>{s.label}</span>;
+}
+
+function MediaPreview({ mediaType, mediaUrl }) {
+  if (!mediaUrl) return null;
+  if (mediaType === 'image') return <img src={mediaUrl} alt="" style={{ maxWidth: 120, maxHeight: 80, borderRadius: 4, objectFit: 'cover' }} />;
+  if (mediaType === 'audio') return <audio src={mediaUrl} controls style={{ height: 28, maxWidth: 160 }} />;
+  if (mediaType === 'video') return <video src={mediaUrl} controls style={{ maxWidth: 160, maxHeight: 90, borderRadius: 4 }} />;
+  return <a href={mediaUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem' }}>View Media</a>;
 }
 
 function StatCard({ label, value }) {
@@ -71,6 +79,11 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   // ── New: Create flow ────────────────────────────────────────────
   const [createStep, setCreateStep] = useState(1);
   const [quizMode, setQuizMode] = useState('NORMAL_QUIZ');
+  const [activePart, setActivePart] = useState('QUIZ');
+  const [introMessage, setIntroMessage] = useState('Welcome to the quiz!');
+  const [passMessage, setPassMessage] = useState('Congratulations. You passed!');
+  const [failMessage, setFailMessage] = useState('I\'m so sorry. You Failed!');
+  const [editingQuestionIdx, setEditingQuestionIdx] = useState(-1);
 
   // ── New: Edit quiz ──────────────────────────────────────────────
   const [editingQuiz, setEditingQuiz] = useState(null);
@@ -81,6 +94,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   const [viewSectionsQuiz, setViewSectionsQuiz] = useState(null);
   const [viewSectionsData, setViewSectionsData] = useState(null);
   const [viewSectionsFilter, setViewSectionsFilter] = useState('ALL');
+  const [viewSectionsPopup, setViewSectionsPopup] = useState(null);
   const sectionsIntervalRef = useRef(null);
 
   // ── New: Normal Quiz 7 question types ──────────────────────────
@@ -110,6 +124,21 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   const [askStudents, setAskStudents] = useState([]);
   const [revealItems, setRevealItems] = useState([{ text: '' }]);
   const [revealIndex, setRevealIndex] = useState(-1);
+  const [perfDbId, setPerfDbId] = useState('');
+  const [perfSection, setPerfSection] = useState('');
+  const [perfSections, setPerfSections] = useState([]);
+  const [perfList, setPerfList] = useState([]);
+  const [perfStudents, setPerfStudents] = useState([]);
+  const [perfScores, setPerfScores] = useState({});
+  const [perfActiveGame, setPerfActiveGame] = useState(null);
+  const [perfAddPopup, setPerfAddPopup] = useState(false);
+  const [perfAddForm, setPerfAddForm] = useState({ title: '', lessonNumber: '', performanceType: 'CHOOSE_ME', maxScore: 100 });
+  const [perfSettings, setPerfSettings] = useState({ allowedPercentageWeight: 100 });
+  const [perfScoredStudents, setPerfScoredStudents] = useState(new Set());
+  const [perfFlippedCard, setPerfFlippedCard] = useState(null);
+  const [perfCardScore, setPerfCardScore] = useState('');
+  const [perfAskPair, setPerfAskPair] = useState({ asker: null, answerer: null });
+  const [perfAskScores, setPerfAskScores] = useState({ askerScore: '', answererScore: '' });
 
   useEffect(() => { loadQuizzes(); loadGradeLevels(); loadStudentDbs(); loadGradeDatabases(); }, []);
 
@@ -236,7 +265,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
     if (!form.title.trim()) { showToast('Title required', 'error'); return; }
     if (form.questions.length === 0) { showToast('Add at least one question', 'error'); return; }
     const firstGl = (form.gradeLevels && form.gradeLevels[0]) ? String(form.gradeLevels[0]) : '';
-    const res = await api.post('/quiz/create', { ...form, gradeLevel: firstGl, createdBy: user.name || user.id || '', quizMode, strictMode: form.strictMode });
+    const res = await api.post('/quiz/create', { ...form, gradeLevel: firstGl, createdBy: user.name || user.id || '', quizMode, strictMode: form.strictMode, introMessage, passMessage, failMessage });
     if (res.success) {
       showToast('Quiz created');
       setCreateStep(1); resetForm(); await loadQuizzes();
@@ -444,7 +473,101 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   };
   const clearHands = () => { setRaisedHands(new Set()); setChosenStudent(null); };
 
+  // ── Performance functions ──────────────────────────────────────
+  const loadPerfSections = async (dbId) => {
+    if (!dbId) return;
+    const res = await api.get(`/grades/database/${dbId}`);
+    if (res.success) {
+      const secs = [...new Set((res.students || []).map(s => s.section).filter(Boolean))].sort();
+      setPerfSections(secs);
+    }
+  };
+  const loadPerfList = async () => {
+    if (!perfDbId || !perfSection) return;
+    const res = await api.get(`/performance/list?databaseId=${perfDbId}&section=${encodeURIComponent(perfSection)}`);
+    if (res.success) setPerfList(res.data || []);
+  };
+  const loadPerfStudents = async () => {
+    if (!chooseGL || !perfSection) return;
+    const params = new URLSearchParams({ gradeLevel: chooseGL, section: perfSection });
+    const res = await api.get(`/quiz/students?${params}`);
+    if (res.success) {
+      setPerfStudents(res.data || []);
+      setChooseStudents(res.data || []);
+      setAskStudents(res.data || []);
+    }
+  };
+  const createPerformance = async () => {
+    if (!perfDbId || !perfSection || !perfAddForm.title) { showToast('Fill required fields', 'error'); return; }
+    const res = await api.post('/performance/create', { databaseId: Number(perfDbId), gradeLevel: chooseGL, section: perfSection, ...perfAddForm });
+    if (res.success) { showToast('Performance created'); setPerfAddPopup(false); setPerfAddForm({ title: '', lessonNumber: '', performanceType: 'CHOOSE_ME', maxScore: 100 }); loadPerfList(); }
+    else showToast(res.message || 'Failed', 'error');
+  };
+  const deletePerformance = async (id) => {
+    if (!confirm('Delete this performance?')) return;
+    const res = await api.del(`/performance/${id}`);
+    if (res.success) { showToast('Deleted'); loadPerfList(); }
+    else showToast(res.message || 'Failed', 'error');
+  };
+  const startPerfGame = async (perf) => {
+    const res = await api.get(`/performance/${perf.id}`);
+    if (res.success) {
+      setPerfActiveGame({ ...perf, scores: res.data.scores || [] });
+      const scored = new Set((res.data.scores || []).filter(s => s.score > 0).map(s => s.student_id));
+      setPerfScoredStudents(scored);
+      setPerfScores({});
+      (res.data.scores || []).forEach(s => { setPerfScores(prev => ({ ...prev, [s.student_id]: s.score })); });
+    }
+  };
+  const savePerfScore = async (studentId, score) => {
+    if (!perfActiveGame) return;
+    const res = await api.post(`/performance/${perfActiveGame.id}/score`, { studentId, score: Number(score) || 0 });
+    if (res.success) {
+      showToast('Score saved');
+      setPerfScoredStudents(prev => new Set([...prev, studentId]));
+      setPerfScores(prev => ({ ...prev, [studentId]: Number(score) || 0 }));
+    } else showToast(res.message || 'Failed', 'error');
+  };
+  const savePerfSettings = async () => {
+    if (!perfDbId) return;
+    const res = await api.post('/performance/settings', { databaseId: Number(perfDbId), allowedPercentageWeight: perfSettings.allowedPercentageWeight });
+    if (res.success) showToast('Settings saved');
+    else showToast(res.message || 'Failed', 'error');
+  };
+  const selectRandomPair = () => {
+    const available = perfStudents.filter(s => !perfScoredStudents.has(s.student_id));
+    if (available.length < 2) {
+      setPerfAskPair({ asker: null, answerer: null });
+      showToast('THE TEACHER WILL ASK', 'info');
+      return;
+    }
+    const shuffled = [...available].sort(() => Math.random() - 0.5);
+    setPerfAskPair({ asker: shuffled[0], answerer: shuffled[1] });
+    setPerfAskScores({ askerScore: '', answererScore: '' });
+  };
+  const shuffleRevealStudent = () => {
+    const available = perfStudents.filter(s => !perfScoredStudents.has(s.student_id));
+    if (available.length === 0) { showToast('All students scored!'); return; }
+    setIsSpinning(true);
+    let count = 0;
+    const max = 12 + Math.floor(Math.random() * 8);
+    const interval = setInterval(() => {
+      const rand = available[Math.floor(Math.random() * available.length)];
+      setPerfFlippedCard(rand);
+      count++;
+      if (count >= max) { clearInterval(interval); setIsSpinning(false); }
+    }, 100 + count * 10);
+  };
+
   // ── Computed ───────────────────────────────────────────────────
+  // ── Media upload helper ─────────────────────────────────────────
+  const handleMediaUpload = async (file) => {
+    const res = await uploadFile('/quiz/media/upload', file);
+    if (res.success) return res.data;
+    showToast(res.message || 'Upload failed', 'error');
+    return null;
+  };
+
   const allGradeLevels = gradeLevels.length > 0 ? gradeLevels : ['MATHAYUM 1','MATHAYUM 2','MATHAYUM 3','MATHAYUM 4','MATHAYUM 5','MATHAYUM 6'];
   const liveGameQuizzes = quizzes.filter(q => q.quiz_mode === 'LIVE_GAME');
   const normalQuizzes = quizzes.filter(q => !q.quiz_mode || q.quiz_mode === 'NORMAL_QUIZ');
@@ -478,7 +601,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => setViewSectionsQuiz(q)} className="btn btn-outline btn-sm" style={{ borderColor: '#00cec9', color: '#00cec9' }}>View Sections</button>
+          <button onClick={() => setViewSectionsPopup(q)} className="btn btn-outline btn-sm" style={{ borderColor: '#00cec9', color: '#00cec9' }}>View Sections</button>
           <button onClick={() => openEditQuiz(q)} className="btn btn-outline btn-sm">Edit</button>
           <button onClick={() => { setSelectedQuiz(q); loadResults(q.id); setTab('results'); }} className="btn btn-outline btn-sm">Results</button>
           {q.status === 'DRAFT' && <button onClick={() => publishQuiz(q.id)} className="btn btn-secondary btn-sm">Publish</button>}
@@ -500,12 +623,12 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
           {QUESTION_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         <textarea placeholder="Question text" value={normalQText} onChange={e => setNormalQText(e.target.value)} rows={2} style={{ width: '100%' }} />
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <select value={normalQMediaType} onChange={e => setNormalQMediaType(e.target.value)} style={{ width: 140 }}>
-            <option value="">No media</option><option value="image">Image</option><option value="video">Video</option><option value="audio">Audio</option>
-          </select>
-          {normalQMediaType && <input placeholder="Media URL" value={normalQMediaUrl} onChange={e => setNormalQMediaUrl(e.target.value)} style={{ flex: 1 }} />}
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="number" placeholder="Points" value={normalQPoints} onChange={e => setNormalQPoints(parseInt(e.target.value) || 1)} style={{ width: 80 }} />
+          <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Media:</label>
+          <input type="file" accept="image/*,video/*,audio/*" onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const data = await handleMediaUpload(f); if (data) { setNormalQMediaType(data.mediaType); setNormalQMediaUrl(data.url); } }} style={{ maxWidth: 200, fontSize: '0.75rem' }} />
+          {normalQMediaUrl && <MediaPreview mediaType={normalQMediaType} mediaUrl={normalQMediaUrl} />}
+          {normalQMediaUrl && <button onClick={() => { setNormalQMediaType(''); setNormalQMediaUrl(''); }} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>Remove</button>}
         </div>
 
         {normalQType === 'MCQ' && (
@@ -676,30 +799,55 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   );
 
   // ── Live Quiz Settings (same as normal but no strict mode) ─────
+  const [liveQType, setLiveQType] = useState('MCQ');
   const renderLiveQuizQBuilder = () => (
     <div className="card" style={{ marginBottom: '1rem' }}>
-      <h4 style={{ marginBottom: '0.8rem' }}>Add Question ({form.questions.length} added) — MCQ only for Live Game</h4>
+      <h4 style={{ marginBottom: '0.8rem' }}>Add Question ({form.questions.length} added) — MCQ + True/False for Live Game</h4>
       <div style={{ display: 'grid', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Type:</label>
+          <select value={liveQType} onChange={e => setLiveQType(e.target.value)} style={{ width: 180 }}>
+            <option value="MCQ">Multiple Choice (A-D)</option>
+            <option value="TF">True / False</option>
+          </select>
+        </div>
         <textarea placeholder="Question text" value={questionForm.questionText} onChange={e => setQuestionForm({ ...questionForm, questionText: e.target.value })} rows={2} style={{ width: '100%' }} />
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <select value={questionForm.mediaType} onChange={e => setQuestionForm({ ...questionForm, mediaType: e.target.value })} style={{ width: 140 }}>
-            <option value="">No media</option><option value="image">Image</option><option value="video">Video</option><option value="audio">Audio</option>
-          </select>
-          <input placeholder="Media URL" value={questionForm.mediaUrl} onChange={e => setQuestionForm({ ...questionForm, mediaUrl: e.target.value })} style={{ flex: 1 }} />
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Media:</label>
+          <input type="file" accept="image/*,video/*,audio/*" onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const data = await handleMediaUpload(f); if (data) { setQuestionForm(prev => ({ ...prev, mediaType: data.mediaType, mediaUrl: data.url })); } }} style={{ maxWidth: 200, fontSize: '0.75rem' }} />
+          {questionForm.mediaUrl && <MediaPreview mediaType={questionForm.mediaType} mediaUrl={questionForm.mediaUrl} />}
+          {questionForm.mediaUrl && <button onClick={() => setQuestionForm(prev => ({ ...prev, mediaType: '', mediaUrl: '' }))} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>Remove</button>}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-          <input placeholder="Choice A" value={questionForm.choiceA} onChange={e => setQuestionForm({ ...questionForm, choiceA: e.target.value })} />
-          <input placeholder="Choice B" value={questionForm.choiceB} onChange={e => setQuestionForm({ ...questionForm, choiceB: e.target.value })} />
-          <input placeholder="Choice C" value={questionForm.choiceC} onChange={e => setQuestionForm({ ...questionForm, choiceC: e.target.value })} />
-          <input placeholder="Choice D" value={questionForm.choiceD} onChange={e => setQuestionForm({ ...questionForm, choiceD: e.target.value })} />
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <select value={questionForm.correctAnswer} onChange={e => setQuestionForm({ ...questionForm, correctAnswer: e.target.value })} style={{ flex: 1 }}>
-            <option value="">Correct Answer</option><option>A</option><option>B</option><option>C</option><option>D</option>
-          </select>
-          <input type="number" placeholder="Points" value={questionForm.points} onChange={e => setQuestionForm({ ...questionForm, points: parseInt(e.target.value) })} style={{ width: 80 }} />
-          <button onClick={addQuestion} className="btn btn-secondary btn-sm">Add</button>
-        </div>
+        {liveQType === 'MCQ' && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+              <input placeholder="Choice A" value={questionForm.choiceA} onChange={e => setQuestionForm({ ...questionForm, choiceA: e.target.value })} />
+              <input placeholder="Choice B" value={questionForm.choiceB} onChange={e => setQuestionForm({ ...questionForm, choiceB: e.target.value })} />
+              <input placeholder="Choice C" value={questionForm.choiceC} onChange={e => setQuestionForm({ ...questionForm, choiceC: e.target.value })} />
+              <input placeholder="Choice D" value={questionForm.choiceD} onChange={e => setQuestionForm({ ...questionForm, choiceD: e.target.value })} />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <select value={questionForm.correctAnswer} onChange={e => setQuestionForm({ ...questionForm, correctAnswer: e.target.value })} style={{ flex: 1 }}>
+                <option value="">Correct Answer</option><option>A</option><option>B</option><option>C</option><option>D</option>
+              </select>
+              <input type="number" placeholder="Points" value={questionForm.points} onChange={e => setQuestionForm({ ...questionForm, points: parseInt(e.target.value) })} style={{ width: 80 }} />
+              <button onClick={addQuestion} className="btn btn-secondary btn-sm">Add</button>
+            </div>
+          </>
+        )}
+        {liveQType === 'TF' && (
+          <div>
+            <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+              <label style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', cursor: 'pointer' }}><input type="radio" checked={normalQTF === 'True'} onChange={() => setNormalQTF('True')} />True</label>
+              <label style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', cursor: 'pointer' }}><input type="radio" checked={normalQTF === 'False'} onChange={() => setNormalQTF('False')} />False</label>
+              <span style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Correct answer: {normalQTF}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input type="number" placeholder="Points" value={questionForm.points} onChange={e => setQuestionForm({ ...questionForm, points: parseInt(e.target.value) })} style={{ width: 80 }} />
+              <button onClick={() => { if (!questionForm.questionText.trim()) { showToast('Question text required', 'error'); return; } setForm(prev => ({ ...prev, questions: [...prev.questions, { ...questionForm, questionType: 'TF', choiceA: 'True', choiceB: 'False', choiceC: '', choiceD: '', correctAnswer: normalQTF }] })); setQuestionForm({ questionText: '', questionType: 'MCQ', mediaType: '', mediaUrl: '', choiceA: '', choiceB: '', choiceC: '', choiceD: '', correctAnswer: '', points: 1 }); showToast('TF Question added'); }} className="btn btn-secondary btn-sm">Add TF Question</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -761,33 +909,140 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
             <div>
               {createStep === 1 && (
                 <div>
-                  <h3 style={{ marginBottom: '1.5rem' }}>Choose Quiz Mode</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', maxWidth: 600 }}>
-                    <button onClick={() => { setQuizMode('LIVE_GAME'); setCreateStep(2); }} style={{ padding: '2rem', borderRadius: 12, background: 'rgba(108,92,231,0.1)', border: '2px solid #6c5ce7', cursor: 'pointer', textAlign: 'center' }}>
-                      <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🎮</div>
-                      <h4 style={{ color: '#6c5ce7', marginBottom: '0.4rem' }}>LIVE GAME</h4>
-                      <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>Kahoot-style real-time game. Students join with a PIN and answer simultaneously.</p>
-                    </button>
-                    <button onClick={() => { setQuizMode('NORMAL_QUIZ'); setCreateStep(2); }} style={{ padding: '2rem', borderRadius: 12, background: 'rgba(0,206,201,0.1)', border: '2px solid #00cec9', cursor: 'pointer', textAlign: 'center' }}>
-                      <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>📝</div>
-                      <h4 style={{ color: '#00cec9', marginBottom: '0.4rem' }}>NORMAL QUIZ</h4>
-                      <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>Students take the quiz at their own pace. Supports 7 question types, strict mode, and live monitoring.</p>
+                  <h3 style={{ marginBottom: '1.5rem' }}>Create Quiz</h3>
+                  {renderQuizSettingsForm(form, setForm, toggleGradeLevel)}
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <h4 style={{ marginBottom: '1rem' }}>Select Mode:</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', maxWidth: 600, marginBottom: '1.5rem' }}>
+                      <button onClick={() => setQuizMode('NORMAL_QUIZ')} style={{ padding: '1.5rem', borderRadius: 12, background: quizMode === 'NORMAL_QUIZ' ? 'rgba(0,206,201,0.2)' : 'var(--bg-input)', border: `2px solid ${quizMode === 'NORMAL_QUIZ' ? '#00cec9' : 'var(--border)'}`, cursor: 'pointer', textAlign: 'center' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '0.3rem' }}>📝</div>
+                        <h4 style={{ color: '#00cec9', marginBottom: '0.2rem', fontSize: '0.95rem' }}>1. NORMAL QUIZ</h4>
+                        <p style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>Individual student, 7 question types</p>
+                      </button>
+                      <button onClick={() => setQuizMode('LIVE_GAME')} style={{ padding: '1.5rem', borderRadius: 12, background: quizMode === 'LIVE_GAME' ? 'rgba(108,92,231,0.2)' : 'var(--bg-input)', border: `2px solid ${quizMode === 'LIVE_GAME' ? '#6c5ce7' : 'var(--border)'}`, cursor: 'pointer', textAlign: 'center' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '0.3rem' }}>🎮</div>
+                        <h4 style={{ color: '#6c5ce7', marginBottom: '0.2rem', fontSize: '0.95rem' }}>2. LIVE GAME</h4>
+                        <p style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>Kahoot-style, MCQ + True/False</p>
+                      </button>
+                    </div>
+                    <button onClick={() => { if (!form.title.trim()) { showToast('Title required', 'error'); return; } setCreateStep(2); setActivePart('QUIZ'); }} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.7rem 2.5rem' }}>
+                      SAVE & Continue to Quiz Editor
                     </button>
                   </div>
                 </div>
               )}
 
-              {createStep === 2 && (
+              {createStep === 2 && quizMode === 'NORMAL_QUIZ' && (
+                <div style={{ display: 'flex', gap: '0', minHeight: 'calc(100vh - 200px)' }}>
+                  {/* LEFT PANEL — Parts Navigation (1/3) */}
+                  <div style={{ width: '33%', minWidth: 220, maxWidth: 320, background: 'var(--bg-card)', borderRight: '1px solid var(--border)', padding: '1rem', overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <button onClick={() => setCreateStep(1)} className="btn btn-outline btn-sm">← Back</button>
+                      <h4 style={{ margin: 0, fontSize: '0.9rem' }}>📝 NORMAL QUIZ</h4>
+                    </div>
+                    <p style={{ color: 'var(--text-dim)', fontSize: '0.75rem', marginBottom: '1rem' }}>{form.title || 'Untitled Quiz'}</p>
+
+                    {['INTRO', 'QUIZ', 'RESULT'].map(part => (
+                      <button key={part} onClick={() => { setActivePart(part); setEditingQuestionIdx(-1); }}
+                        style={{ display: 'block', width: '100%', padding: '0.8rem', marginBottom: '0.4rem', textAlign: 'left', borderRadius: 8, cursor: 'pointer', fontWeight: activePart === part ? 700 : 400,
+                          background: activePart === part ? 'rgba(0,206,201,0.15)' : 'var(--bg-input)', border: `1px solid ${activePart === part ? '#00cec9' : 'var(--border)'}`, color: activePart === part ? '#00cec9' : 'var(--text)' }}>
+                        {part === 'INTRO' ? '🏠 INTRO PART' : part === 'QUIZ' ? '📋 THE QUIZ PART' : '🏆 RESULT PART'}
+                        {part === 'QUIZ' && <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', display: 'block' }}>{form.questions.length} question(s)</span>}
+                      </button>
+                    ))}
+
+                    {activePart === 'QUIZ' && form.questions.length > 0 && (
+                      <div style={{ marginTop: '0.5rem', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
+                        <p style={{ color: 'var(--text-dim)', fontSize: '0.75rem', marginBottom: '0.4rem' }}>Questions:</p>
+                        {form.questions.map((q, i) => (
+                          <div key={i} style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', marginBottom: '0.3rem' }}>
+                            <button onClick={() => setEditingQuestionIdx(i)} style={{ flex: 1, textAlign: 'left', padding: '0.3rem 0.5rem', borderRadius: 4, background: editingQuestionIdx === i ? 'rgba(0,206,201,0.1)' : 'transparent', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text)' }}>
+                              {i + 1}. [{q.questionType || 'MCQ'}] {(q.questionText || '').substring(0, 25)}{(q.questionText || '').length > 25 ? '...' : ''}
+                            </button>
+                            <button onClick={() => removeQuestion(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                      <button onClick={createQuiz} className="btn btn-primary btn-sm" style={{ width: '100%', marginBottom: '0.5rem' }}>Create Quiz</button>
+                      <button onClick={() => { setCreateStep(1); resetForm(); }} className="btn btn-outline btn-sm" style={{ width: '100%' }}>Cancel</button>
+                    </div>
+                  </div>
+
+                  {/* RIGHT PANEL — Content Editor (2/3) */}
+                  <div style={{ flex: 1, padding: '1.5rem', overflowY: 'auto' }}>
+                    {activePart === 'INTRO' && (
+                      <div>
+                        <h3 style={{ marginBottom: '1rem' }}>🏠 INTRO PART</h3>
+                        <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '1rem' }}>Students will see this before starting the quiz.</p>
+                        <div className="card" style={{ marginBottom: '1rem' }}>
+                          <label style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Intro Message:</label>
+                          <textarea value={introMessage} onChange={e => setIntroMessage(e.target.value)} rows={2} style={{ width: '100%', marginTop: '0.3rem' }} />
+                        </div>
+                        <div className="card" style={{ marginBottom: '1rem' }}>
+                          <label style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Exam Title:</label>
+                          <p style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-bright)' }}>{form.title || '(set in quiz settings)'}</p>
+                        </div>
+                        <div className="card" style={{ marginBottom: '1rem' }}>
+                          <label style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Description:</label>
+                          <p style={{ color: 'var(--text)' }}>Please click the &quot;START QUIZ&quot; button to start.</p>
+                        </div>
+                        <div className="card" style={{ background: 'rgba(0,206,201,0.05)', padding: '2rem', textAlign: 'center', borderRadius: 12 }}>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>Preview:</p>
+                          <h2 style={{ color: 'var(--text-bright)', marginBottom: '0.5rem' }}>{introMessage}</h2>
+                          <h3 style={{ color: 'var(--secondary)', marginBottom: '1rem' }}>{form.title}</h3>
+                          <p style={{ color: 'var(--text-dim)', marginBottom: '1rem' }}>Please click the &quot;START QUIZ&quot; button to start.</p>
+                          <button className="btn btn-primary" disabled>START QUIZ</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {activePart === 'RESULT' && (
+                      <div>
+                        <h3 style={{ marginBottom: '1rem' }}>🏆 RESULT PART</h3>
+                        <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '1rem' }}>Messages shown after quiz completion.</p>
+                        <div className="card" style={{ marginBottom: '1rem' }}>
+                          <label style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Passing Score Message:</label>
+                          <textarea value={passMessage} onChange={e => setPassMessage(e.target.value)} rows={2} style={{ width: '100%', marginTop: '0.3rem' }} />
+                        </div>
+                        <div className="card" style={{ marginBottom: '1rem' }}>
+                          <label style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Failed Score Message:</label>
+                          <textarea value={failMessage} onChange={e => setFailMessage(e.target.value)} rows={2} style={{ width: '100%', marginTop: '0.3rem' }} />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                          <div className="card" style={{ background: 'rgba(0,206,201,0.05)', textAlign: 'center', padding: '2rem' }}>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>If PASSED:</p>
+                            <p style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--success)' }}>{passMessage}</p>
+                          </div>
+                          <div className="card" style={{ background: 'rgba(225,112,85,0.05)', textAlign: 'center', padding: '2rem' }}>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>If FAILED:</p>
+                            <p style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--danger)' }}>{failMessage}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activePart === 'QUIZ' && (
+                      <div>
+                        <h3 style={{ marginBottom: '1rem' }}>📋 THE QUIZ PART</h3>
+                        {renderNormalQBuilder(form, form.questions, addNormalQuestion)}
+                        {renderQuestionList(form.questions, removeQuestion)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {createStep === 2 && quizMode === 'LIVE_GAME' && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
                     <button onClick={() => setCreateStep(1)} className="btn btn-outline btn-sm">← Back</button>
-                    <h3 style={{ margin: 0 }}>Create {quizMode === 'LIVE_GAME' ? '🎮 LIVE GAME' : '📝 NORMAL QUIZ'}</h3>
+                    <h3 style={{ margin: 0 }}>🎮 LIVE GAME Quiz Editor</h3>
                   </div>
 
-                  {renderQuizSettingsForm(form, setForm, toggleGradeLevel)}
-
-                  {quizMode === 'LIVE_GAME' ? renderLiveQuizQBuilder() : renderNormalQBuilder(form, form.questions, addNormalQuestion)}
-
+                  {renderLiveQuizQBuilder()}
                   {renderQuestionList(form.questions, removeQuestion)}
 
                   <button onClick={createQuiz} className="btn btn-primary">Create Quiz</button>
@@ -891,162 +1146,293 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
           {/* ══════════ LIVE PERFORMANCE TAB ══════════ */}
           {tab === 'live-performance' && (
             <div>
-              <h3 style={{ marginBottom: '1rem' }}>Live Performance Games</h3>
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-                {[
-                  { id: 'choose-me', label: '🎯 Choose Me!' },
-                  { id: 'ask-me', label: '✋ Ask Me!' },
-                  { id: 'reveal-me', label: '🔮 Reveal Me!' },
-                  { id: 'roulette', label: '🎡 Student Roulette' },
-                ].map(g => (
-                  <button key={g.id} onClick={() => setLivePerformGame(g.id)} className={`btn btn-sm ${livePerformGame === g.id ? 'btn-secondary' : 'btn-outline'}`}>{g.label}</button>
-                ))}
-              </div>
+              <h3 style={{ marginBottom: '1rem' }}>Live Performance</h3>
+              <style>{`
+                @keyframes pixieDust { 0% { opacity: 1; transform: scale(1) translateY(0); } 100% { opacity: 0; transform: scale(0.3) translateY(-40px); } }
+                @keyframes firefly { 0%, 100% { opacity: 0.2; transform: translate(0,0); } 50% { opacity: 0.8; transform: translate(${Math.random()*20-10}px, ${Math.random()*20-10}px); } }
+                @keyframes glowPulse { 0%, 100% { text-shadow: 0 0 8px rgba(0,206,201,0.5); } 50% { text-shadow: 0 0 20px rgba(0,206,201,1), 0 0 40px rgba(108,92,231,0.5); } }
+                @keyframes cardFlip { 0% { transform: rotateY(0deg); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0deg); } }
+                .enchanted-bg { background: linear-gradient(135deg, #0a0a2e 0%, #1a1a4e 50%, #0d0d3a 100%); position: relative; overflow: hidden; }
+                .tarot-card { width: 130px; height: 190px; border-radius: 10px; cursor: pointer; perspective: 1000px; transition: transform 0.3s, box-shadow 0.3s; position: relative; }
+                .tarot-card:hover { transform: translateY(-8px); box-shadow: 0 8px 30px rgba(108,92,231,0.4); }
+                .tarot-dark { background: linear-gradient(145deg, #1a1a2e, #16213e, #0f3460); border: 2px solid rgba(108,92,231,0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+                .tarot-light { background: linear-gradient(145deg, #f0f0ff, #e8e8ff, #d5d5ff); border: 2px solid rgba(108,92,231,0.5); box-shadow: 0 4px 15px rgba(108,92,231,0.2); }
+                .tarot-number { font-size: 1.8rem; font-weight: 800; animation: glowPulse 2s infinite; color: #00cec9; }
+              `}</style>
 
+              {/* Database & Section selector */}
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={chooseGL} onChange={e => { setChooseGL(e.target.value); setChooseStudents([]); setChosenStudent(null); }}>
+                <select value={perfDbId} onChange={e => { const v = e.target.value; setPerfDbId(v); setPerfSection(''); setPerfList([]); if (v) loadPerfSections(v); }}>
+                  <option value="">Select Database</option>
+                  {gradeDatabases.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+                <select value={chooseGL} onChange={e => setChooseGL(e.target.value)}>
                   <option value="">Grade Level</option>
                   {allGradeLevels.map(gl => <option key={gl} value={gl}>{gl}</option>)}
                 </select>
-                <input placeholder="Section (optional)" value={chooseSection} onChange={e => setChooseSection(e.target.value)} style={{ width: 150 }} />
-                <button onClick={loadChooseStudents} className="btn btn-secondary btn-sm">Load Students</button>
-                {chooseStudents.length > 0 && <span style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>{chooseStudents.length} students loaded</span>}
+                {perfSections.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                    {perfSections.map(sec => (
+                      <button key={sec} onClick={() => { setPerfSection(sec); }} className={`btn btn-sm ${perfSection === sec ? 'btn-secondary' : 'btn-outline'}`}>
+                        Section {sec}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {perfSection && <button onClick={() => { loadPerfList(); loadPerfStudents(); }} className="btn btn-secondary btn-sm">Load</button>}
               </div>
 
-              {/* CHOOSE ME */}
-              {livePerformGame === 'choose-me' && (
-                <div className="card" style={{ textAlign: 'center' }}>
-                  <h4 style={{ marginBottom: '1.5rem' }}>🎯 Choose Me! — Random Student Selector</h4>
-                  <div style={{ minHeight: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
-                    {isSpinning ? (
-                      <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--secondary)', animation: 'pulse 0.1s infinite' }}>
-                        {chosenStudent ? (chosenStudent.english_name || chosenStudent.student_id) : '...'}
+              {perfSection && (
+                <div style={{ display: 'flex', gap: '1rem', minHeight: 'calc(100vh - 300px)' }}>
+                  {/* Left navigation */}
+                  <div style={{ width: 300, flexShrink: 0, background: 'var(--bg-card)', borderRadius: 8, padding: '1rem', overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <h4 style={{ margin: 0, fontSize: '0.9rem' }}>Performances</h4>
+                      <button onClick={() => setPerfAddPopup(true)} className="btn btn-primary btn-sm" disabled={!perfSection}>+ ADD</button>
+                    </div>
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Allowed % Weight:</label>
+                      <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                        <input type="number" value={perfSettings.allowedPercentageWeight} onChange={e => setPerfSettings({ ...perfSettings, allowedPercentageWeight: Number(e.target.value) || 0 })} style={{ width: 70, fontSize: '0.85rem' }} />
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>%</span>
+                        <button onClick={savePerfSettings} className="btn btn-outline btn-sm" style={{ fontSize: '0.7rem' }}>Save</button>
                       </div>
-                    ) : chosenStudent ? (
+                    </div>
+                    {perfList.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>No performances yet. Click + ADD to create one.</p>}
+                    {perfList.map(p => (
+                      <div key={p.id} style={{ padding: '0.5rem', marginBottom: '0.4rem', borderRadius: 6, cursor: 'pointer', background: perfActiveGame?.id === p.id ? 'rgba(0,206,201,0.15)' : 'var(--bg-input)', border: `1px solid ${perfActiveGame?.id === p.id ? '#00cec9' : 'var(--border)'}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div onClick={() => startPerfGame(p)} style={{ flex: 1, cursor: 'pointer' }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{p.title}</div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Lesson {p.lesson_number || '—'} | {p.performance_type} | Max: {p.max_score}</div>
+                          </div>
+                          <button onClick={() => deletePerformance(p.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>Del</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Right content — Game or scores */}
+                  <div style={{ flex: 1, overflowY: 'auto' }}>
+                    {!perfActiveGame && (
+                      <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-dim)' }}>
+                        <p style={{ fontSize: '1.2rem' }}>Select a performance from the list to start the game.</p>
+                      </div>
+                    )}
+
+                    {perfActiveGame && (
                       <div>
-                        <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🎉</div>
-                        <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)' }}>{chosenStudent.english_name || chosenStudent.student_id}</div>
-                        <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>{chosenStudent.section} | No. {chosenStudent.class_no} | {chosenStudent.student_id}</div>
+                        {/* Game area with enchanted background */}
+                        <div className="enchanted-bg" style={{ borderRadius: 12, padding: '2rem', marginBottom: '1rem', minHeight: 400 }}>
+                          {/* Firefly dots */}
+                          {Array.from({ length: 8 }).map((_, i) => (
+                            <div key={i} style={{ position: 'absolute', width: 4, height: 4, borderRadius: '50%', background: '#fdcb6e', animation: `firefly ${3 + i}s infinite ${i * 0.5}s`, left: `${10 + i * 12}%`, top: `${15 + (i % 3) * 25}%`, pointerEvents: 'none' }} />
+                          ))}
+
+                          <h3 style={{ textAlign: 'center', color: '#00cec9', marginBottom: '0.5rem', animation: 'glowPulse 3s infinite' }}>{perfActiveGame.title}</h3>
+                          <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem', marginBottom: '1.5rem' }}>{perfActiveGame.performance_type} | Max Score: {perfActiveGame.max_score}</p>
+
+                          {/* CHOOSE ME - Tarot Cards */}
+                          {perfActiveGame.performance_type === 'CHOOSE_ME' && (
+                            <div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem', justifyContent: 'center' }}>
+                                {perfStudents.map((s, i) => {
+                                  const scored = perfScoredStudents.has(s.student_id);
+                                  return (
+                                    <div key={s.student_id} className={`tarot-card ${scored ? 'tarot-light' : 'tarot-dark'}`}
+                                      onClick={() => { if (!scored || true) { setPerfFlippedCard(s); setPerfCardScore(perfScores[s.student_id] || ''); } }}
+                                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                                      <div className="tarot-number">{i + 1}</div>
+                                      {scored && <div style={{ fontSize: '0.65rem', color: '#6c5ce7', fontWeight: 600 }}>{(s.english_name || '').substring(0, 12)}</div>}
+                                      {scored && <div style={{ fontSize: '0.7rem', color: '#00b894', fontWeight: 700 }}>Score: {perfScores[s.student_id] || 0}</div>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Flipped card modal */}
+                              {perfFlippedCard && (
+                                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPerfFlippedCard(null)}>
+                                  <div onClick={e => e.stopPropagation()} style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '2.5rem', minWidth: 280, textAlign: 'center', border: '2px solid rgba(0,206,201,0.5)', boxShadow: '0 0 40px rgba(108,92,231,0.3)', animation: 'cardFlip 0.6s' }}>
+                                    <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)', marginBottom: '0.3rem' }}>ID: {perfFlippedCard.student_id}</div>
+                                    <div style={{ fontSize: '0.9rem', color: '#fdcb6e', marginBottom: '0.2rem' }}>{perfFlippedCard.thai_name || '—'}</div>
+                                    <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#fff', marginBottom: '1rem' }}>{perfFlippedCard.english_name || perfFlippedCard.student_id}</div>
+                                    <div style={{ marginBottom: '1rem' }}>
+                                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>Score (max {perfActiveGame.max_score}):</label>
+                                      <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} style={{ width: 100, textAlign: 'center', fontSize: '1.5rem', marginTop: '0.3rem' }} max={perfActiveGame.max_score} />
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                                      <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); }} className="btn btn-primary">Save</button>
+                                      <button onClick={() => setPerfFlippedCard(null)} className="btn btn-outline" style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>Close</button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* ASK ME - Two landscape cards */}
+                          {perfActiveGame.performance_type === 'ASK_ME' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+                              {!perfAskPair.asker && <button onClick={selectRandomPair} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.8rem 2rem' }}>Select First Pair</button>}
+                              {perfAskPair.asker && (
+                                <>
+                                  {/* Asker card */}
+                                  <div style={{ background: 'linear-gradient(135deg, #2d3436, #636e72)', borderRadius: 12, padding: '1.5rem 2rem', minWidth: 350, textAlign: 'center', border: '2px solid #fdcb6e' }}>
+                                    <div style={{ color: '#fdcb6e', fontSize: '0.8rem', marginBottom: '0.3rem' }}>WILL ASK THE QUESTION</div>
+                                    <div style={{ color: '#fff', fontSize: '0.8rem' }}>ID: {perfAskPair.asker.student_id}</div>
+                                    <div style={{ color: '#fdcb6e', fontSize: '0.85rem' }}>{perfAskPair.asker.thai_name || '—'}</div>
+                                    <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.5rem' }}>{perfAskPair.asker.english_name}</div>
+                                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', justifyContent: 'center' }}>
+                                      <input type="number" placeholder="Score" value={perfAskScores.askerScore} onChange={e => setPerfAskScores(prev => ({ ...prev, askerScore: e.target.value }))} style={{ width: 80, textAlign: 'center' }} />
+                                      <button onClick={() => savePerfScore(perfAskPair.asker.student_id, perfAskScores.askerScore)} className="btn btn-secondary btn-sm">Save</button>
+                                    </div>
+                                    <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.answerer?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, asker: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline btn-sm" style={{ marginTop: '0.5rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>Change</button>
+                                  </div>
+                                  {/* Answerer card */}
+                                  <div style={{ background: 'linear-gradient(135deg, #0984e3, #6c5ce7)', borderRadius: 12, padding: '1.5rem 2rem', minWidth: 350, textAlign: 'center', border: '2px solid #00cec9' }}>
+                                    <div style={{ color: '#00cec9', fontSize: '0.8rem', marginBottom: '0.3rem' }}>WILL ANSWER</div>
+                                    <div style={{ color: '#fff', fontSize: '0.8rem' }}>ID: {perfAskPair.answerer.student_id}</div>
+                                    <div style={{ color: '#74b9ff', fontSize: '0.85rem' }}>{perfAskPair.answerer.thai_name || '—'}</div>
+                                    <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.5rem' }}>{perfAskPair.answerer.english_name}</div>
+                                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', justifyContent: 'center' }}>
+                                      <input type="number" placeholder="Score" value={perfAskScores.answererScore} onChange={e => setPerfAskScores(prev => ({ ...prev, answererScore: e.target.value }))} style={{ width: 80, textAlign: 'center' }} />
+                                      <button onClick={() => savePerfScore(perfAskPair.answerer.student_id, perfAskScores.answererScore)} className="btn btn-secondary btn-sm">Save</button>
+                                    </div>
+                                    <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.asker?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, answerer: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline btn-sm" style={{ marginTop: '0.5rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>Change</button>
+                                  </div>
+                                  <button onClick={selectRandomPair} className="btn btn-primary" style={{ marginTop: '0.5rem' }}>Select Next Pair</button>
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {/* REVEAL ME - Shuffle and reveal */}
+                          {perfActiveGame.performance_type === 'REVEAL_ME' && (
+                            <div style={{ textAlign: 'center' }}>
+                              {!perfFlippedCard && !isSpinning && (
+                                <button onClick={shuffleRevealStudent} className="btn btn-primary" style={{ fontSize: '1.2rem', padding: '0.8rem 2.5rem' }} disabled={perfStudents.filter(s => !perfScoredStudents.has(s.student_id)).length === 0}>
+                                  Shuffle & Reveal
+                                </button>
+                              )}
+                              {isSpinning && perfFlippedCard && (
+                                <div style={{ animation: 'cardFlip 0.3s', background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '2rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)' }}>
+                                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#00cec9' }}>{perfFlippedCard.english_name || perfFlippedCard.student_id}</div>
+                                </div>
+                              )}
+                              {!isSpinning && perfFlippedCard && (
+                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '2.5rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)', minWidth: 300 }}>
+                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem' }}>ID: {perfFlippedCard.student_id}</div>
+                                  <div style={{ color: '#fdcb6e', fontSize: '0.9rem' }}>{perfFlippedCard.thai_name || '—'}</div>
+                                  <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem' }}>{perfFlippedCard.english_name}</div>
+                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
+                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 80, textAlign: 'center', fontSize: '1.2rem' }} />
+                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary">Save</button>
+                                  </div>
+                                  <button onClick={shuffleRevealStudent} className="btn btn-outline btn-sm" style={{ marginTop: '1rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>SHUFFLE AGAIN</button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* STUDENT ROULETTE - Spinning wheel */}
+                          {perfActiveGame.performance_type === 'STUDENT_ROULETTE' && (
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ position: 'relative', width: 300, height: 300, margin: '0 auto 1.5rem', borderRadius: '50%', overflow: 'hidden', border: '3px solid rgba(0,206,201,0.5)', background: 'rgba(0,0,0,0.3)' }}>
+                                {perfStudents.filter(s => !perfScoredStudents.has(s.student_id)).slice(0, 12).map((s, i, arr) => {
+                                  const angle = (360 / arr.length) * i;
+                                  const colors = ['#6c5ce7','#00cec9','#fd79a8','#fdcb6e','#55efc4','#74b9ff','#e17055','#a29bfe'];
+                                  return (
+                                    <div key={s.student_id} style={{ position: 'absolute', width: '50%', height: '50%', transformOrigin: '100% 100%', transform: `rotate(${angle}deg)`, background: colors[i % colors.length], opacity: 0.85 }}>
+                                      <span style={{ position: 'absolute', top: 4, right: 4, fontSize: '0.55rem', color: '#fff', fontWeight: 700, transform: `rotate(${-angle}deg)` }}>{(s.english_name || s.student_id).substring(0, 8)}</span>
+                                    </div>
+                                  );
+                                })}
+                                <div style={{ position: 'absolute', inset: '30%', borderRadius: '50%', background: 'rgba(10,10,46,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, border: '2px solid rgba(0,206,201,0.3)' }}>
+                                  {perfFlippedCard && !isSpinning ? <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#00cec9', textAlign: 'center' }}>{(perfFlippedCard.english_name || '').substring(0, 12)}</span> : <span style={{ fontSize: '2rem' }}>🎡</span>}
+                                </div>
+                                {/* Arrow */}
+                                <div style={{ position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderTop: '16px solid #e17055', zIndex: 3 }} />
+                              </div>
+                              {perfFlippedCard && !isSpinning && (
+                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '1.5rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)', minWidth: 280, marginBottom: '1rem' }}>
+                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem' }}>ID: {perfFlippedCard.student_id}</div>
+                                  <div style={{ color: '#fdcb6e' }}>{perfFlippedCard.thai_name || '—'}</div>
+                                  <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem' }}>{perfFlippedCard.english_name}</div>
+                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
+                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 80, textAlign: 'center' }} />
+                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary btn-sm">Save</button>
+                                  </div>
+                                </div>
+                              )}
+                              <div>
+                                <button onClick={shuffleRevealStudent} disabled={isSpinning} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.7rem 2rem' }}>
+                                  {isSpinning ? 'Spinning...' : 'SPIN AGAIN'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Student scores table */}
+                        <div className="card">
+                          <h4 style={{ marginBottom: '0.5rem' }}>Student Scores — {perfActiveGame.title}</h4>
+                          <table style={{ fontSize: '0.8rem', width: '100%' }}>
+                            <thead>
+                              <tr><th>ID</th><th>Thai Name</th><th>English Name</th><th>#</th><th>Score / {perfActiveGame.max_score}</th></tr>
+                            </thead>
+                            <tbody>
+                              {perfStudents.map(s => (
+                                <tr key={s.student_id}>
+                                  <td>{s.student_id}</td>
+                                  <td>{s.thai_name || '—'}</td>
+                                  <td>{s.english_name || '—'}</td>
+                                  <td>{s.class_no || '—'}</td>
+                                  <td style={{ fontWeight: 600, color: perfScoredStudents.has(s.student_id) ? '#00b894' : 'var(--text-dim)' }}>{perfScores[s.student_id] ?? '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                    ) : (
-                      <div style={{ color: 'var(--text-dim)', fontSize: '1.5rem' }}>Press the button to pick!</div>
                     )}
                   </div>
-                  <button onClick={spinChooseMe} disabled={isSpinning || chooseStudents.length === 0} className="btn btn-primary" style={{ fontSize: '1.2rem', padding: '0.8rem 2rem' }}>
-                    {isSpinning ? 'Picking...' : '🎯 Pick Random Student'}
-                  </button>
-                  {chosenStudent && !isSpinning && <button onClick={() => setChosenStudent(null)} className="btn btn-outline" style={{ marginLeft: '0.5rem' }}>Reset</button>}
                 </div>
               )}
 
-              {/* ASK ME */}
-              {livePerformGame === 'ask-me' && (
-                <div className="card">
-                  <h4 style={{ marginBottom: '1rem' }}>✋ Ask Me! — Hand Raise Tracker</h4>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                    <button onClick={pickFromRaisedHands} className="btn btn-primary btn-sm" disabled={raisedHands.size === 0}>
-                      Pick from {raisedHands.size} Raised Hand{raisedHands.size !== 1 ? 's' : ''}
-                    </button>
-                    <button onClick={clearHands} className="btn btn-outline btn-sm">Clear All Hands</button>
+              {/* Add Performance Popup */}
+              {perfAddPopup && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPerfAddPopup(false)}>
+                  <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '2rem', maxWidth: 400, width: '90%' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <h3>Add Performance</h3>
+                      <button onClick={() => setPerfAddPopup(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'var(--text-dim)' }}>✕</button>
+                    </div>
+                    <div style={{ display: 'grid', gap: '0.8rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Performance Type:</label>
+                        <select value={perfAddForm.performanceType} onChange={e => setPerfAddForm({ ...perfAddForm, performanceType: e.target.value })} style={{ width: '100%' }}>
+                          <option value="CHOOSE_ME">Choose Me!</option>
+                          <option value="ASK_ME">Ask Me!</option>
+                          <option value="REVEAL_ME">Reveal Me!</option>
+                          <option value="STUDENT_ROULETTE">Student Roulette</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Title:</label>
+                        <input value={perfAddForm.title} onChange={e => setPerfAddForm({ ...perfAddForm, title: e.target.value })} placeholder="Performance title" style={{ width: '100%' }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Lesson Number:</label>
+                        <input value={perfAddForm.lessonNumber} onChange={e => setPerfAddForm({ ...perfAddForm, lessonNumber: e.target.value })} placeholder="e.g. Lesson 1" style={{ width: '100%' }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Maximum Score:</label>
+                        <input type="number" value={perfAddForm.maxScore} onChange={e => setPerfAddForm({ ...perfAddForm, maxScore: Number(e.target.value) || 100 })} style={{ width: '100%' }} />
+                      </div>
+                      <button onClick={createPerformance} className="btn btn-primary">SAVE</button>
+                    </div>
                   </div>
-                  {chosenStudent && (
-                    <div className="card" style={{ background: 'rgba(0,206,201,0.1)', marginBottom: '1rem', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem' }}>✋ Called on:</div>
-                      <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)' }}>{chosenStudent.english_name || chosenStudent.student_id}</div>
-                    </div>
-                  )}
-                  {askStudents.length === 0 ? (
-                    <p style={{ color: 'var(--text-dim)' }}>Load students first using the grade level selector above.</p>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.4rem' }}>
-                      {askStudents.map(s => {
-                        const raised = raisedHands.has(s.student_id);
-                        return (
-                          <button key={s.student_id} onClick={() => toggleHand(s.student_id)}
-                            style={{ padding: '0.5rem', borderRadius: 8, cursor: 'pointer', textAlign: 'center', background: raised ? 'rgba(0,206,201,0.2)' : 'var(--bg-input)', border: `2px solid ${raised ? 'var(--secondary)' : 'var(--border)'}`, transition: 'all 0.2s' }}>
-                            <div style={{ fontSize: '1.2rem' }}>{raised ? '✋' : '🙅'}</div>
-                            <div style={{ fontSize: '0.8rem', fontWeight: raised ? 700 : 400, color: raised ? 'var(--secondary)' : 'var(--text-dim)' }}>{s.english_name || s.student_id}</div>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{s.section}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* REVEAL ME */}
-              {livePerformGame === 'reveal-me' && (
-                <div className="card">
-                  <h4 style={{ marginBottom: '1rem' }}>🔮 Reveal Me! — One-by-One Reveal</h4>
-                  {revealIndex < 0 ? (
-                    <div>
-                      <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '1rem' }}>Add items to reveal one by one with suspense (answers, words, images URLs, etc.)</p>
-                      {revealItems.map((item, i) => (
-                        <div key={i} style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
-                          <span style={{ fontWeight: 700, minWidth: 24, color: 'var(--text-dim)' }}>{i + 1}.</span>
-                          <input placeholder={`Item ${i + 1}`} value={item.text} onChange={e => { const ni = [...revealItems]; ni[i] = { text: e.target.value }; setRevealItems(ni); }} style={{ flex: 1 }} />
-                          {revealItems.length > 1 && <button onClick={() => setRevealItems(revealItems.filter((_, idx) => idx !== i))} style={{ background: 'none', color: 'var(--danger)', border: 'none', cursor: 'pointer' }}>✕</button>}
-                        </div>
-                      ))}
-                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                        <button onClick={() => setRevealItems([...revealItems, { text: '' }])} className="btn btn-outline btn-sm">+ Add Item</button>
-                        <button onClick={() => { if (revealItems.filter(i => i.text).length === 0) { showToast('Add items first', 'error'); return; } setRevealIndex(0); }} className="btn btn-primary">Start Reveal</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ marginBottom: '0.5rem', color: 'var(--text-dim)', fontSize: '0.85rem' }}>Item {revealIndex + 1} of {revealItems.filter(i => i.text).length}</div>
-                      <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-bright)', padding: '2rem', background: 'var(--bg-input)', borderRadius: 12, marginBottom: '1.5rem', minHeight: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {revealItems.filter(i => i.text)[revealIndex]?.text || ''}
-                      </div>
-                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-                        <button onClick={() => setRevealIndex(Math.max(0, revealIndex - 1))} className="btn btn-outline" disabled={revealIndex === 0}>← Previous</button>
-                        {revealIndex < revealItems.filter(i => i.text).length - 1
-                          ? <button onClick={() => setRevealIndex(revealIndex + 1)} className="btn btn-primary">Next →</button>
-                          : <button onClick={() => { setRevealIndex(-1); }} className="btn btn-danger">Finish</button>
-                        }
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* STUDENT ROULETTE */}
-              {livePerformGame === 'roulette' && (
-                <div className="card" style={{ textAlign: 'center' }}>
-                  <h4 style={{ marginBottom: '1.5rem' }}>🎡 Student Roulette — Spinning Wheel</h4>
-                  {chooseStudents.length === 0 ? (
-                    <p style={{ color: 'var(--text-dim)' }}>Load students first using the grade level selector above.</p>
-                  ) : (
-                    <div>
-                      <div style={{ position: 'relative', width: 280, height: 280, margin: '0 auto 1.5rem', borderRadius: '50%', overflow: 'hidden', border: '4px solid var(--border)', background: 'var(--bg-input)' }}>
-                        {chooseStudents.slice(0, 12).map((s, i, arr) => {
-                          const angle = (360 / arr.length) * i;
-                          const colors = ['#6c5ce7','#00cec9','#fd79a8','#fdcb6e','#55efc4','#74b9ff','#e17055','#a29bfe'];
-                          return (
-                            <div key={s.student_id} style={{ position: 'absolute', width: '50%', height: '50%', transformOrigin: '100% 100%', transform: `rotate(${angle}deg)`, background: colors[i % colors.length], opacity: 0.85, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', padding: '0.4rem', boxSizing: 'border-box' }}>
-                              <span style={{ fontSize: '0.6rem', color: '#fff', fontWeight: 700, transform: `rotate(${-angle - (360 / arr.length) / 2}deg)`, maxWidth: 50, textAlign: 'center', wordBreak: 'break-word' }}>{(s.english_name || s.student_id).substring(0, 10)}</span>
-                            </div>
-                          );
-                        })}
-                        <div style={{ position: 'absolute', inset: '25%', borderRadius: '50%', background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
-                          {chosenStudent && !isSpinning ? <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--success)', textAlign: 'center', padding: '0.3rem' }}>{(chosenStudent.english_name || chosenStudent.student_id).substring(0, 12)}</span> : <span style={{ fontSize: '1.5rem' }}>🎡</span>}
-                        </div>
-                      </div>
-                      {chosenStudent && !isSpinning && (
-                        <div style={{ marginBottom: '1rem' }}>
-                          <div style={{ fontSize: '1.5rem' }}>🎉 Selected:</div>
-                          <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)' }}>{chosenStudent.english_name || chosenStudent.student_id}</div>
-                          <div style={{ color: 'var(--text-dim)' }}>{chosenStudent.section} | No. {chosenStudent.class_no}</div>
-                        </div>
-                      )}
-                      <button onClick={spinChooseMe} disabled={isSpinning} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.7rem 2rem' }}>
-                        {isSpinning ? 'Spinning...' : '🎡 Spin!'}
-                      </button>
-                      {chosenStudent && !isSpinning && <button onClick={() => setChosenStudent(null)} className="btn btn-outline" style={{ marginLeft: '0.5rem' }}>Reset</button>}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1243,7 +1629,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ fontSize: '0.85rem' }}>
                     <thead>
-                      <tr><th>No.</th><th>Student ID</th><th>Name</th><th>Section</th><th>Status</th><th>Score</th><th>Tab Switches</th><th>Actions</th></tr>
+                      <tr><th>No.</th><th>Student ID</th><th>Name</th><th>Section</th><th>Tab Switches</th><th>Score</th><th>STATUS</th><th>REMARKS</th></tr>
                     </thead>
                     <tbody>
                       {(viewSectionsFilter === 'ALL' ? viewSectionsData.students : (viewSectionsData.sections.find(s => s.section === viewSectionsFilter)?.students || []))?.map((s, i) => (
@@ -1252,14 +1638,23 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                           <td>{s.student_id}</td>
                           <td>{s.english_name || s.thai_name}</td>
                           <td>{s.section}</td>
-                          <td><StatusBadge status={s.status} /></td>
-                          <td>{s.score !== null && s.score !== undefined ? `${parseFloat(s.score).toFixed(1)}%` : '—'}</td>
                           <td>{s.tabSwitchCount || 0}</td>
+                          <td>{s.score !== null && s.score !== undefined ? `${parseFloat(s.score).toFixed(1)}%` : '—'}</td>
+                          <td><StatusBadge status={s.status} /></td>
                           <td>
                             <div style={{ display: 'flex', gap: '0.3rem' }}>
-                              {s.status === 'COMPLETED' && <button onClick={() => forceRetake(viewSectionsQuiz.id, s.student_id)} className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem' }}>Retake</button>}
-                              {s.status === 'IN_PROGRESS' && <button onClick={() => blockStudent(viewSectionsQuiz.id, s.student_id)} className="btn btn-danger btn-sm" style={{ fontSize: '0.75rem' }}>Block</button>}
-                              {s.status === 'BLOCKED' && <button onClick={() => unblockStudent(viewSectionsQuiz.id, s.student_id)} className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem' }}>Unblock</button>}
+                              {s.status === 'BLOCKED' && (
+                                <button onClick={() => unblockStudent(viewSectionsQuiz.id, s.student_id)} className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem', textDecoration: 'underline', cursor: 'pointer' }}>Allow</button>
+                              )}
+                              {(s.status === 'COMPLETED' && (s.result === 'PASSED' || s.result === 'FAILED')) && (
+                                <button onClick={() => forceRetake(viewSectionsQuiz.id, s.student_id)} className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem', textDecoration: 'underline', cursor: 'pointer', color: '#e17055' }}>Retake</button>
+                              )}
+                              {s.status === 'IN_PROGRESS' && (
+                                <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>—</span>
+                              )}
+                              {s.status === 'NOT_STARTED' && (
+                                <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>—</span>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1318,6 +1713,38 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
               </tbody>
             </table>
             {(reviewAttempt.answers || []).length === 0 && <p style={{ color: 'var(--text-dim)' }}>No answers stored for this attempt.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ VIEW SECTIONS POPUP (2 options) ══════════ */}
+      {viewSectionsPopup && (
+        <div role="presentation" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setViewSectionsPopup(null)}>
+          <div role="dialog" aria-modal="true" style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '2rem', maxWidth: 400, width: '90%', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: '1.5rem' }}>View Sections — {viewSectionsPopup.title}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <button onClick={() => { setViewSectionsFilter('ALL'); setViewSectionsQuiz(viewSectionsPopup); setViewSectionsPopup(null); }} className="btn btn-primary" style={{ padding: '1rem', fontSize: '1rem' }}>
+                VIEW ENTIRE SECTIONS
+              </button>
+              <div>
+                <p style={{ color: 'var(--text-dim)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Or select a specific section:</p>
+                {viewSectionsPopup && (
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {(viewSectionsData?.sections || []).map(sec => (
+                      <button key={sec.section} onClick={() => { setViewSectionsFilter(sec.section); setViewSectionsQuiz(viewSectionsPopup); setViewSectionsPopup(null); }} className="btn btn-outline btn-sm">
+                        {sec.section}
+                      </button>
+                    ))}
+                    {!(viewSectionsData?.sections?.length) && (
+                      <button onClick={() => { loadSectionsStatus(viewSectionsPopup.id).then(() => { setViewSectionsFilter('ALL'); setViewSectionsQuiz(viewSectionsPopup); setViewSectionsPopup(null); }); }} className="btn btn-secondary btn-sm">
+                        VIEW SPECIFIC SECTION (load first)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button onClick={() => setViewSectionsPopup(null)} className="btn btn-outline btn-sm" style={{ marginTop: '1.5rem' }}>Cancel</button>
           </div>
         </div>
       )}
