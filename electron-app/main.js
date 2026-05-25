@@ -40,6 +40,7 @@ function startServer() {
     process.env.PORT = String(SERVER_PORT);
     process.env.NODE_ENV = 'production';
     process.env.DATABASE_PATH = dbPath;
+    process.env.EDUVERSE_DATA_DIR = userDataPath;
     process.env.FRONTEND_PATH = frontendPath;
 
     try {
