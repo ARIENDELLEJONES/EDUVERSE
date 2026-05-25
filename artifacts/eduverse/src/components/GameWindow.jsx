@@ -15,7 +15,11 @@ function ChooseMeGame({ students, scoredStudents, scores, maxScore, onSave }) {
   const [cardScore, setCardScore] = useState('');
 
   useEffect(() => {
-    const shuffled = [...students].sort(() => Math.random() - 0.5);
+    const shuffled = [...students];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
     setShuffledStudents(shuffled);
   }, [students]);
 

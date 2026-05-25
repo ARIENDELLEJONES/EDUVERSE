@@ -17,6 +17,15 @@ const QUESTION_TYPES = [
   { id: 'WORD_HUNT', label: 'Word Hunt' },
 ];
 
+function shuffleArray(arr) {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 function StatusBadge({ status }) {
   const map = {
     NOT_STARTED: { label: 'Logging in', cls: 'badge-warning' },
@@ -139,6 +148,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   const [perfAddForm, setPerfAddForm] = useState({ title: '', lessonNumber: '', performanceType: 'CHOOSE_ME', maxScore: 100 });
   const [perfSettings, setPerfSettings] = useState({ allowedPercentageWeight: 100 });
   const [perfScoredStudents, setPerfScoredStudents] = useState(new Set());
+  const [perfShuffledStudents, setPerfShuffledStudents] = useState([]);
   const [perfFlippedCard, setPerfFlippedCard] = useState(null);
   const [perfCardScore, setPerfCardScore] = useState('');
   const [perfAskPair, setPerfAskPair] = useState({ asker: null, answerer: null });
@@ -147,6 +157,15 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   const [quizPreview, setQuizPreview] = useState(null);
 
   useEffect(() => { loadQuizzes(); loadGradeLevels(); loadStudentDbs(); loadGradeDatabases(); }, []);
+
+  // Shuffle students for Choose Me whenever perfStudents changes
+  useEffect(() => {
+    if (perfStudents.length > 0) {
+      setPerfShuffledStudents(shuffleArray(perfStudents));
+    } else {
+      setPerfShuffledStudents([]);
+    }
+  }, [perfStudents]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1278,7 +1297,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                           {perfActiveGame.performance_type === 'CHOOSE_ME' && (
                             <div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem', justifyContent: 'center' }}>
-                                {perfStudents.map((s, i) => {
+                                {perfShuffledStudents.map((s, i) => {
                                   const scored = perfScoredStudents.has(s.student_id);
                                   return (
                                     <div key={s.student_id} className={`tarot-card ${scored ? 'tarot-light' : 'tarot-dark'}`}
