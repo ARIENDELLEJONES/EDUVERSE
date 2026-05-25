@@ -1,0 +1,245 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build React frontend
+        shell: bash
+        run: PORT=5000 BASE_PATH=/ pnpm --filter @workspace/eduverse run build
+
+      - name: Build API server
+        shell: bash
+        run: PORT=5000 pnpm --filter @workspace/api-server run build
+
+      - name: Download portable Node.js for Windows
+        shell: pwsh
+        run: |
+          $nodeUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-win-x64.zip"
+          Write-Host "Downloading portable Node.js..."
+          Invoke-WebRequest -Uri $nodeUrl -OutFile "node-win.zip" -UseBasicParsing
+          Expand-Archive -Path "node-win.zip" -DestinationPath "node-win-extracted"
+          Rename-Item "node-win-extracted\node-v20.18.0-win-x64" "node-win-extracted\node"
+          Write-Host "Node.js ready."
+
+      - name: Prepare installer structure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "installer-staging\node"
+          New-Item -ItemType Directory -Force -Path "installer-staging\server"
+          New-Item -ItemType Directory -Force -Path "installer-staging\frontend"
+
+          # Copy portable Node.js
+          Copy-Item -Recurse -Force "node-win-extracted\node\*" "installer-staging\node\"
+
+          # Copy API server dist (skip source maps)
+          Get-ChildItem -Recurse "artifacts\api-server\dist" |
+            Where-Object { $_.Extension -ne ".map" } |
+            ForEach-Object {
+              $dest = $_.FullName.Replace((Resolve-Path "artifacts\api-server\dist").Path, (Resolve-Path "installer-staging\server").Path)
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item $_.FullName $dest
+            }
+
+          # Copy server node_modules
+          Copy-Item -Recurse -Force "artifacts\api-server\node_modules" "installer-staging\server\node_modules"
+
+          # Copy frontend dist
+          $frontendSrc = "artifacts\eduverse\dist\public"
+          if (-not (Test-Path $frontendSrc)) { $frontendSrc = "artifacts\eduverse\dist" }
+          Copy-Item -Recurse -Force "$frontendSrc\*" "installer-staging\frontend\"
+
+          Write-Host "Installer staging complete."
+          Get-ChildItem "installer-staging" | Format-Table Name, Length
+
+      - name: Create launcher scripts
+        shell: pwsh
+        run: |
+          # Main launcher batch file
+          $launcherContent = @'
+          @echo off
+          title EDUVERSE
+          set INSTALL_DIR=%~dp0
+          set PORT=5000
+          set NODE_ENV=production
+          set FRONTEND_PATH=%INSTALL_DIR%frontend
+          set EDUVERSE_DATA_DIR=%APPDATA%\EDUVERSE\data
+
+          if not exist "%APPDATA%\EDUVERSE\data" mkdir "%APPDATA%\EDUVERSE\data"
+
+          echo Starting EDUVERSE server...
+          start /b "" "%INSTALL_DIR%node\node.exe" --enable-source-maps "%INSTALL_DIR%server\index.mjs"
+
+          echo Waiting for server to start...
+          timeout /t 3 /nobreak >nul
+
+          echo Opening EDUVERSE in your browser...
+          start "" "http://localhost:%PORT%"
+
+          echo.
+          echo EDUVERSE is running at http://localhost:%PORT%
+          echo Close this window to stop the server.
+          echo.
+          pause
+          '@
+          $launcherContent | Set-Content -Path "installer-staging\EDUVERSE.bat" -Encoding ASCII
+
+          # VBS launcher (runs without console window)
+          $vbsContent = @'
+          Set WShell = CreateObject("WScript.Shell")
+          InstallDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
+          WShell.Run Chr(34) & InstallDir & "EDUVERSE.bat" & Chr(34), 1, False
+          '@
+          $vbsContent | Set-Content -Path "installer-staging\EDUVERSE-Launcher.vbs" -Encoding ASCII
+
+          Write-Host "Launcher scripts created."
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.09 -y --no-progress
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          makensis /VERSION
+          echo "NSIS_PATH=C:\Program Files (x86)\NSIS" >> $env:GITHUB_ENV
+
+      - name: Create NSIS installer script
+        shell: pwsh
+        run: |
+          $nsisScript = @'
+          !include "MUI2.nsh"
+          !include "FileFunc.nsh"
+
+          Name "EDUVERSE"
+          OutFile "EDUVERSE-Setup-1.0.0.exe"
+          Unicode True
+          InstallDir "$PROGRAMFILES64\EDUVERSE"
+          InstallDirRegKey HKCU "Software\EDUVERSE" ""
+          RequestExecutionLevel user
+
+          !define MUI_ABORTWARNING
+          !define MUI_ICON "..\installer-staging\icon.ico"
+          !define MUI_UNICON "..\installer-staging\icon.ico"
+          !define MUI_WELCOMEPAGE_TITLE "Welcome to EDUVERSE Setup"
+          !define MUI_WELCOMEPAGE_TEXT "This wizard will install EDUVERSE - Hybrid Educational Platform on your computer.$\r$\n$\r$\nClick Next to continue."
+          !define MUI_FINISHPAGE_RUN "$INSTDIR\EDUVERSE.bat"
+          !define MUI_FINISHPAGE_RUN_TEXT "Launch EDUVERSE now"
+
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+          !insertmacro MUI_LANGUAGE "English"
+
+          Section "Main" SecMain
+            SetOutPath "$INSTDIR"
+            
+            ; Copy all staged files
+            File /r "..\installer-staging\*.*"
+            
+            ; Create desktop shortcut
+            CreateShortcut "$DESKTOP\EDUVERSE.lnk" "$INSTDIR\EDUVERSE.bat" "" "$INSTDIR\node\node.exe" 0
+
+            ; Create start menu shortcut
+            CreateDirectory "$SMPROGRAMS\EDUVERSE"
+            CreateShortcut "$SMPROGRAMS\EDUVERSE\EDUVERSE.lnk" "$INSTDIR\EDUVERSE.bat" "" "$INSTDIR\node\node.exe" 0
+            CreateShortcut "$SMPROGRAMS\EDUVERSE\Uninstall EDUVERSE.lnk" "$INSTDIR\Uninstall.exe"
+
+            ; Write registry
+            WriteRegStr HKCU "Software\EDUVERSE" "" "$INSTDIR"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "DisplayName" "EDUVERSE"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "UninstallString" "$INSTDIR\Uninstall.exe"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "DisplayVersion" "1.0.0"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "Publisher" "Joseph Brylle D. Egay"
+            WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "NoModify" 1
+            WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE" "NoRepair" 1
+            
+            WriteUninstaller "$INSTDIR\Uninstall.exe"
+          SectionEnd
+
+          Section "Uninstall"
+            Delete "$INSTDIR\Uninstall.exe"
+            RMDir /r "$INSTDIR"
+            Delete "$DESKTOP\EDUVERSE.lnk"
+            RMDir /r "$SMPROGRAMS\EDUVERSE"
+            DeleteRegKey HKCU "Software\EDUVERSE"
+            DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EDUVERSE"
+          SectionEnd
+          '@
+          $nsisScript | Set-Content -Path "installer.nsi" -Encoding UTF8
+          Write-Host "NSIS script created."
+
+      - name: Copy icon for installer
+        shell: pwsh
+        run: |
+          Copy-Item -Force "electron-app\build\icon.ico" "installer-staging\icon.ico"
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ env.NSIS_PATH }};$env:PATH"
+          makensis installer.nsi
+          Write-Host "Installer built!"
+          Get-ChildItem "*.exe" | Format-Table Name, Length
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: EDUVERSE-Windows-Installer
+          path: EDUVERSE-Setup-1.0.0.exe
+          retention-days: 30
+
+      - name: Create GitHub Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: EDUVERSE ${{ github.ref_name }}
+          body: |
+            ## EDUVERSE Windows Installer
+
+            ### Installation
+            1. Download `EDUVERSE-Setup-1.0.0.exe`
+            2. Run it and follow the setup wizard
+            3. Launch EDUVERSE from your Desktop or Start Menu
+
+            ### What's included
+            - Portable Node.js runtime (no installation required)
+            - Full API server + React frontend
+            - SQLite database (auto-created in `%APPDATA%\EDUVERSE`)
+            - Desktop & Start Menu shortcuts
+            - Works on any Windows 10/11 x64 machine
+
+            ### First-time setup
+            - Default admin password: `admin123`
+            - Default teacher password: `teacher123`
+            - Change both immediately after first login!
+          files: EDUVERSE-Setup-1.0.0.exe
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

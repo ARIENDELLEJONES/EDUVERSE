@@ -1,0 +1,71 @@
+{
+  "name": "eduverse",
+  "version": "1.0.0",
+  "description": "EDUVERSE - Hybrid LAN + Cloud Educational Platform",
+  "main": "main.js",
+  "author": "Joseph Brylle D. Egay",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.eduverse.app",
+    "productName": "EDUVERSE",
+    "copyright": "Copyright © 2026 Joseph Brylle D. Egay",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist-installer"
+    },
+    "files": [
+      "main.js",
+      "build/icon.ico",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../artifacts/api-server/dist",
+        "to": "server",
+        "filter": ["**/*.mjs", "**/*.js", "!**/*.map"]
+      },
+      {
+        "from": "../artifacts/api-server/node_modules",
+        "to": "server/node_modules",
+        "filter": ["**/*", "!**/*.map"]
+      },
+      {
+        "from": "../artifacts/eduverse/dist/public",
+        "to": "frontend",
+        "filter": ["**/*"]
+      }
+    ],
+    "asar": false,
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "sign": false,
+      "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "EDUVERSE",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "EDUVERSE-Setup-${version}.exe",
+      "license": "build/license.txt",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  }
+}

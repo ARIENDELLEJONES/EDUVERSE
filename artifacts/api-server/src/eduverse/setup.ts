@@ -13,6 +13,7 @@ import backupRoutes from './routes/backup.js';
 import studentsRoutes from './routes/students.js';
 import livegameRoutes from './routes/livegame.js';
 import adminRoutes from './routes/admin.js';
+import performanceRoutes from './routes/performance.js';
 
 export function setupEduverse(app: any): void {
   initDatabase();
@@ -22,6 +23,16 @@ export function setupEduverse(app: any): void {
   fs.mkdirSync(quizMediaDir, { recursive: true });
 
   app.use(compression());
+
+  // Serve built React frontend when running in Electron/production mode
+  const frontendPath = process.env.FRONTEND_PATH;
+  if (frontendPath && fs.existsSync(frontendPath)) {
+    const serveStatic = require('serve-static');
+    app.use(serveStatic(frontendPath));
+    app.get('*', (_req: any, res: any) => {
+      res.sendFile(path.join(frontendPath, 'index.html'));
+    });
+  }
 
   app.use('/uploads/quiz-media', (req: any, res: any, next: any) => {
     const filePath = path.join(quizMediaDir, req.path);
@@ -43,6 +54,7 @@ export function setupEduverse(app: any): void {
   app.use('/api/students', studentsRoutes);
   app.use('/api/livegame', livegameRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/performance', performanceRoutes);
 
   app.get('/api/system/info', (_req: any, res: any) => {
     const nets = os.networkInterfaces();

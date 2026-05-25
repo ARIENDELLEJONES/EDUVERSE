@@ -1,0 +1,9 @@
+EDUVERSE — Hybrid LAN + Cloud Educational Platform
+Copyright © 2026 Joseph Brylle D. Egay
+
+This software is provided for educational use.
+All rights reserved.
+
+By installing this software, you agree to use it
+responsibly and in accordance with your institution's
+policies.
