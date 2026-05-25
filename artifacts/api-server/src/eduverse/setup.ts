@@ -28,8 +28,7 @@ export function setupEduverse(app: any): void {
   // Serve built React frontend when running in Electron/production mode
   const frontendPath = process.env.FRONTEND_PATH;
   if (frontendPath && fs.existsSync(frontendPath)) {
-    const serveStatic = require('serve-static');
-    app.use(serveStatic(frontendPath));
+    app.use(express.static(frontendPath));
     app.get('*', (_req: any, res: any) => {
       res.sendFile(path.join(frontendPath, 'index.html'));
     });
