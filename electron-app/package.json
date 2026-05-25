@@ -31,7 +31,7 @@
         "filter": ["**/*.mjs", "**/*.js", "!**/*.map"]
       },
       {
-        "from": "../artifacts/api-server/node_modules",
+        "from": "../artifacts/api-server/node_modules_bundled",
         "to": "server/node_modules",
         "filter": ["**/*", "!**/*.map"]
       },
