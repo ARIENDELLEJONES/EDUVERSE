@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api, downloadFile, uploadFile } from '../api';
 import { KahootHostView } from './KahootGame';
 import GradingSheetEditor from '../components/GradingSheetEditor';
+import GameWindow from '../components/GameWindow';
+import WordHuntBuilder from '../components/WordHuntBuilder';
+import RatingGridBuilder from '../components/RatingGridBuilder';
+import QuizPreview from '../components/QuizPreview';
 
 const QUESTION_TYPES = [
   { id: 'MCQ', label: 'Multiple Choice (A-D)' },
@@ -139,6 +143,8 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
   const [perfCardScore, setPerfCardScore] = useState('');
   const [perfAskPair, setPerfAskPair] = useState({ asker: null, answerer: null });
   const [perfAskScores, setPerfAskScores] = useState({ askerScore: '', answererScore: '' });
+  const [perfGameWindow, setPerfGameWindow] = useState(null);
+  const [quizPreview, setQuizPreview] = useState(null);
 
   useEffect(() => { loadQuizzes(); loadGradeLevels(); loadStudentDbs(); loadGradeDatabases(); }, []);
 
@@ -487,9 +493,33 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
     const res = await api.get(`/performance/list?databaseId=${perfDbId}&section=${encodeURIComponent(perfSection)}`);
     if (res.success) setPerfList(res.data || []);
   };
-  const loadPerfStudents = async () => {
-    if (!chooseGL || !perfSection) return;
-    const params = new URLSearchParams({ gradeLevel: chooseGL, section: perfSection });
+  const loadPerfStudents = async (glOverride, secOverride) => {
+    const gl = glOverride || chooseGL;
+    const sec = secOverride || perfSection;
+    if (!sec) return;
+    // Try loading from database first if grade level not set
+    if (perfDbId && sec) {
+      const dbRes = await api.get(`/grades/database/${perfDbId}`);
+      if (dbRes.success && dbRes.students) {
+        const filtered = dbRes.students.filter(s => s.section === sec);
+        if (filtered.length > 0) {
+          const mapped = filtered.map(s => ({
+            student_id: s.student_id, thai_name: s.thai_name, english_name: s.english_name,
+            class_no: s.class_no, section: s.section, grade_level: s.grade_level
+          })).sort((a, b) => {
+            const aNo = parseInt(a.class_no) || 999999;
+            const bNo = parseInt(b.class_no) || 999999;
+            return aNo - bNo;
+          });
+          setPerfStudents(mapped);
+          setChooseStudents(mapped);
+          setAskStudents(mapped);
+          return;
+        }
+      }
+    }
+    if (!gl) return;
+    const params = new URLSearchParams({ gradeLevel: gl, section: sec });
     const res = await api.get(`/quiz/students?${params}`);
     if (res.success) {
       setPerfStudents(res.data || []);
@@ -602,6 +632,7 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
         </div>
         <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setViewSectionsPopup(q)} className="btn btn-outline btn-sm" style={{ borderColor: '#00cec9', color: '#00cec9' }}>View Sections</button>
+          <button onClick={async () => { const res = await api.get(`/quiz/${q.id}`); if (res.success) setQuizPreview({ ...q, questions: res.data?.questions || [], introMessage: res.data?.intro_message, passMessage: res.data?.pass_message, failMessage: res.data?.fail_message }); else showToast('Failed to load quiz', 'error'); }} className="btn btn-outline btn-sm" style={{ borderColor: '#00cec9', color: '#00cec9' }}>View Quiz</button>
           <button onClick={() => openEditQuiz(q)} className="btn btn-outline btn-sm">Edit</button>
           <button onClick={() => { setSelectedQuiz(q); loadResults(q.id); setTab('results'); }} className="btn btn-outline btn-sm">Results</button>
           {q.status === 'DRAFT' && <button onClick={() => publishQuiz(q.id)} className="btn btn-secondary btn-sm">Publish</button>}
@@ -702,29 +733,27 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
 
         {normalQType === 'RATING_GRID' && (
           <div>
-            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Survey/rating grid — students rate each row on the column scale</p>
-            <div style={{ marginBottom: '0.5rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Items to rate:</label>
-              {ratingRows.map((row, i) => (
-                <div key={i} style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.3rem' }}>
-                  <input placeholder={`Item ${i + 1}`} value={row} onChange={e => { const nr = [...ratingRows]; nr[i] = e.target.value; setRatingRows(nr); }} style={{ flex: 1 }} />
-                  {ratingRows.length > 1 && <button onClick={() => setRatingRows(ratingRows.filter((_, idx) => idx !== i))} style={{ background: 'none', color: 'var(--danger)', border: 'none', cursor: 'pointer' }}>✕</button>}
-                </div>
-              ))}
-              <button onClick={() => setRatingRows([...ratingRows, ''])} className="btn btn-outline btn-sm">+ Add Item</button>
-            </div>
-            <div>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Rating scale (cols): {ratingCols.join(', ')}</label>
-              <input placeholder="Columns (comma-separated)" value={ratingCols.join(',')} onChange={e => setRatingCols(e.target.value.split(',').map(c => c.trim()).filter(Boolean))} style={{ width: '100%', marginTop: '0.3rem' }} />
-            </div>
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Build a customizable rating scale grid (Google Forms style)</p>
+            <RatingGridBuilder onSave={(data) => {
+              const extraData = JSON.stringify({ rows: data.rows, cols: data.columns.map(c => c.label), columns: data.columns, scoringMode: data.scoringMode });
+              const q = { questionText: normalQText || 'Rating Grid', questionType: 'RATING_GRID', points: normalQPoints, mediaType: normalQMediaType, mediaUrl: normalQMediaUrl, correctAnswer: 'SURVEY', extraData };
+              setForm(prev => ({ ...prev, questions: [...prev.questions, q] }));
+              showToast('Rating Grid added');
+              setNormalQText(''); setNormalQPoints(1);
+            }} />
           </div>
         )}
 
         {normalQType === 'WORD_HUNT' && (
           <div>
-            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Students find the hidden word in a grid of letters</p>
-            <input placeholder="Word to find (e.g. PHOTOSYNTHESIS)" value={wordHuntWord} onChange={e => setWordHuntWord(e.target.value.toUpperCase())} style={{ width: '100%', fontFamily: 'monospace', letterSpacing: 2 }} />
-            {wordHuntWord && <p style={{ color: 'var(--secondary)', fontSize: '0.85rem', marginTop: '0.3rem' }}>Hidden word: <strong>{wordHuntWord}</strong> ({wordHuntWord.length} letters)</p>}
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Create a word search puzzle with theme and hidden words</p>
+            <WordHuntBuilder onSave={(data) => {
+              const extraData = JSON.stringify(data);
+              const q = { questionText: normalQText || `Word Hunt: ${data.theme || 'Puzzle'}`, questionType: 'WORD_HUNT', points: normalQPoints, mediaType: normalQMediaType, mediaUrl: normalQMediaUrl, correctAnswer: data.words.join(','), extraData };
+              setForm(prev => ({ ...prev, questions: [...prev.questions, q] }));
+              showToast('Word Hunt puzzle added');
+              setNormalQText(''); setNormalQPoints(1);
+            }} />
           </div>
         )}
 
@@ -1173,13 +1202,13 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                 {perfSections.length > 0 && (
                   <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                     {perfSections.map(sec => (
-                      <button key={sec} onClick={() => { setPerfSection(sec); }} className={`btn btn-sm ${perfSection === sec ? 'btn-secondary' : 'btn-outline'}`}>
+                      <button key={sec} onClick={() => { setPerfSection(sec); setTimeout(() => { loadPerfList(); loadPerfStudents(chooseGL, sec); }, 50); }} className={`btn btn-sm ${perfSection === sec ? 'btn-secondary' : 'btn-outline'}`}>
                         Section {sec}
                       </button>
                     ))}
                   </div>
                 )}
-                {perfSection && <button onClick={() => { loadPerfList(); loadPerfStudents(); }} className="btn btn-secondary btn-sm">Load</button>}
+                {perfSection && <button onClick={() => { loadPerfList(); loadPerfStudents(); }} className="btn btn-secondary btn-sm">Reload</button>}
               </div>
 
               {perfSection && (
@@ -1199,17 +1228,30 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                       </div>
                     </div>
                     {perfList.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>No performances yet. Click + ADD to create one.</p>}
-                    {perfList.map(p => (
-                      <div key={p.id} style={{ padding: '0.5rem', marginBottom: '0.4rem', borderRadius: 6, cursor: 'pointer', background: perfActiveGame?.id === p.id ? 'rgba(0,206,201,0.15)' : 'var(--bg-input)', border: `1px solid ${perfActiveGame?.id === p.id ? '#00cec9' : 'var(--border)'}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div onClick={() => startPerfGame(p)} style={{ flex: 1, cursor: 'pointer' }}>
+                    {perfList.map(p => {
+                      const pScored = (perfActiveGame?.id === p.id) ? perfScoredStudents.size : 0;
+                      const pTotal = perfStudents.length;
+                      const unchosen = (perfActiveGame?.id === p.id) ? (pTotal - pScored) : null;
+                      return (
+                        <div key={p.id} style={{ padding: '0.5rem', marginBottom: '0.4rem', borderRadius: 6, background: perfActiveGame?.id === p.id ? 'rgba(0,206,201,0.15)' : 'var(--bg-input)', border: `1px solid ${perfActiveGame?.id === p.id ? '#00cec9' : 'var(--border)'}` }}>
+                          <div onClick={() => startPerfGame(p)} style={{ cursor: 'pointer' }}>
                             <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{p.title}</div>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Lesson {p.lesson_number || '—'} | {p.performance_type} | Max: {p.max_score}</div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Lesson {p.lesson_number || '\u2014'} | {p.performance_type.replace(/_/g, ' ')} | Max: {p.max_score}</div>
+                            {unchosen !== null && <div style={{ fontSize: '0.7rem', color: unchosen > 0 ? '#fdcb6e' : '#00b894', marginTop: '0.2rem' }}>{unchosen > 0 ? `${unchosen} students not chosen yet` : 'All students scored!'}</div>}
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.2rem', fontStyle: 'italic' }}>
+                              {p.performance_type === 'CHOOSE_ME' && 'Click cards to flip & reveal students'}
+                              {p.performance_type === 'ASK_ME' && 'Random pairs: one asks, one answers'}
+                              {p.performance_type === 'REVEAL_ME' && 'Shuffle names to reveal a student'}
+                              {p.performance_type === 'STUDENT_ROULETTE' && 'Spin the wheel to pick a student'}
+                            </div>
                           </div>
-                          <button onClick={() => deletePerformance(p.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>Del</button>
+                          <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.4rem', justifyContent: 'flex-end' }}>
+                            <button onClick={() => { startPerfGame(p).then(() => setPerfGameWindow(p)); }} className="btn btn-primary btn-sm" style={{ fontSize: '0.7rem', padding: '0.2rem 0.6rem' }}>PLAY</button>
+                            <button onClick={() => deletePerformance(p.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0.2rem' }} title="Delete">&#128465;</button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Right content — Game or scores */}
@@ -1747,6 +1789,21 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
             <button onClick={() => setViewSectionsPopup(null)} className="btn btn-outline btn-sm" style={{ marginTop: '1.5rem' }}>Cancel</button>
           </div>
         </div>
+      )}
+
+      {/* Game Window Overlay */}
+      {perfGameWindow && perfStudents.length > 0 && (
+        <GameWindow
+          performance={perfGameWindow}
+          students={perfStudents}
+          onClose={() => { setPerfGameWindow(null); if (perfActiveGame) startPerfGame(perfActiveGame); }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Quiz Preview Overlay */}
+      {quizPreview && (
+        <QuizPreview quiz={quizPreview} onClose={() => setQuizPreview(null)} />
       )}
     </div>
   );

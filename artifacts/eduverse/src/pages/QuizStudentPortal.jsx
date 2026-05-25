@@ -2,17 +2,31 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api';
 import { KahootPlayerView } from './KahootGame';
 
-function genWordHuntGrid(word, size = 10) {
+function genWordHuntGrid(wordOrWords, gridSize) {
+  const size = gridSize || 15;
   const grid = Array.from({ length: size }, () => Array(size).fill(''));
   const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  // Place word horizontally at random position
-  const row = Math.floor(Math.random() * size);
-  const col = Math.min(Math.floor(Math.random() * (size - word.length)), size - word.length);
-  for (let i = 0; i < word.length; i++) grid[row][col + i] = word[i];
-  // Fill rest with random letters
-  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
-    if (!grid[r][c]) grid[r][c] = letters[Math.floor(Math.random() * letters.length)];
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+  const wordsToPlace = Array.isArray(wordOrWords) ? wordOrWords : (wordOrWords ? [wordOrWords] : []);
+  for (const word of wordsToPlace) {
+    const w = word.toUpperCase();
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const [dr, dc] = dirs[Math.floor(Math.random() * dirs.length)];
+      const r = Math.floor(Math.random() * size);
+      const c = Math.floor(Math.random() * size);
+      let canPlace = true;
+      for (let i = 0; i < w.length; i++) {
+        const nr = r + dr * i, nc = c + dc * i;
+        if (nr < 0 || nr >= size || nc < 0 || nc >= size) { canPlace = false; break; }
+        if (grid[nr][nc] !== '' && grid[nr][nc] !== w[i]) { canPlace = false; break; }
+      }
+      if (canPlace) {
+        for (let i = 0; i < w.length; i++) grid[r + dr * i][c + dc * i] = w[i];
+        break;
+      }
+    }
   }
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (!grid[r][c]) grid[r][c] = letters[Math.floor(Math.random() * 26)];
   return grid;
 }
 
@@ -109,32 +123,40 @@ function SequencingQuestion({ question, answer, onAnswer }) {
 }
 
 function RatingGridQuestion({ question, answer, onAnswer }) {
-  const rows = question.extraData?.rows || [];
-  const cols = question.extraData?.cols || ['1', '2', '3', '4', '5'];
+  const extraData = question.extraData || {};
+  const rows = extraData.rows || [];
+  const cols = extraData.cols || extraData.columns?.map(c => c.label || c) || ['1', '2', '3', '4', '5'];
+  const scoringMode = extraData.scoringMode || 'total';
   const stored = (() => { try { return answer ? JSON.parse(answer) : {}; } catch { return {}; } })();
   const setRating = (row, col) => {
     const next = { ...stored, [row]: col };
     onAnswer(JSON.stringify(next));
   };
+  const answeredCount = Object.keys(stored).length;
+  const totalScore = Object.values(stored).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const avgScore = answeredCount > 0 ? (totalScore / answeredCount).toFixed(1) : 0;
+  const maxPossible = rows.length * cols.length;
+  const pct = maxPossible > 0 ? ((totalScore / maxPossible) * 100).toFixed(0) : 0;
+
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', background: 'rgba(255,255,255,0.02)', borderRadius: 8 }}>
         <thead>
-          <tr>
-            <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-dim)', fontSize: '0.85rem' }}>Item</th>
-            {cols.map(c => <th key={c} style={{ padding: '0.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.85rem' }}>{c}</th>)}
+          <tr style={{ borderBottom: '2px solid var(--border)' }}>
+            <th style={{ padding: '0.6rem', textAlign: 'left', color: 'var(--text-dim)', fontSize: '0.85rem' }}>Criteria</th>
+            {cols.map((c, i) => <th key={i} style={{ padding: '0.6rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.8rem', minWidth: 60 }}>{c}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map(row => (
-            <tr key={row} style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={{ padding: '0.6rem 0.5rem', color: 'var(--text)' }}>{row}</td>
-              {cols.map(col => {
+            <tr key={row} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }}>
+              <td style={{ padding: '0.7rem 0.6rem', color: 'var(--text-bright)', fontSize: '0.9rem' }}>{row}</td>
+              {cols.map((col, ci) => {
                 const selected = stored[row] === col;
                 return (
-                  <td key={col} style={{ textAlign: 'center', padding: '0.4rem' }}>
+                  <td key={ci} style={{ textAlign: 'center', padding: '0.4rem' }}>
                     <button onClick={() => setRating(row, col)}
-                      style={{ width: 32, height: 32, borderRadius: '50%', border: `2px solid ${selected ? 'var(--primary)' : 'var(--border)'}`, background: selected ? 'var(--primary)' : 'transparent', cursor: 'pointer', transition: 'all 0.2s' }}
+                      style={{ width: 30, height: 30, borderRadius: '50%', border: `2px solid ${selected ? '#4285f4' : 'var(--border)'}`, background: selected ? '#4285f4' : 'transparent', cursor: 'pointer', transition: 'all 0.2s', boxShadow: selected ? '0 0 8px rgba(66,133,244,0.3)' : 'none' }}
                       aria-label={`Rate ${row} as ${col}`} />
                   </td>
                 );
@@ -143,43 +165,153 @@ function RatingGridQuestion({ question, answer, onAnswer }) {
           ))}
         </tbody>
       </table>
+      {answeredCount > 0 && (
+        <div style={{ marginTop: '0.8rem', padding: '0.8rem', background: 'rgba(0,206,201,0.05)', borderRadius: 8, border: '1px solid rgba(0,206,201,0.2)', fontSize: '0.8rem' }}>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', color: 'var(--text-dim)' }}>
+            <span>Completed: {answeredCount}/{rows.length}</span>
+            {scoringMode === 'total' && <span>Total: {totalScore}</span>}
+            {scoringMode === 'average' && <span>Average: {avgScore}</span>}
+            <span>{pct}% satisfaction</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function WordHuntQuestion({ question, answer, onAnswer }) {
-  const word = (question.extraData?.word || question.correctAnswer || '').toUpperCase();
-  const [grid] = useState(() => genWordHuntGrid(word));
-  const [highlighted, setHighlighted] = useState(new Set());
-  const [wordInput, setWordInput] = useState(answer || '');
+  const extraData = question.extraData || {};
+  const words = extraData.words || (extraData.word ? [extraData.word.toUpperCase()] : [(question.correctAnswer || '').toUpperCase()]);
+  const gridSize = extraData.gridSize || (extraData.grid ? extraData.grid.length : 15);
+  const [grid] = useState(() => {
+    if (extraData.grid) return extraData.grid;
+    return genWordHuntGrid(words[0] || '', gridSize);
+  });
+  const [foundWords, setFoundWords] = useState(() => {
+    try { return answer ? JSON.parse(answer) : []; } catch { return []; }
+  });
   const [selecting, setSelecting] = useState(false);
   const [startCell, setStartCell] = useState(null);
-  const handleCellClick = (r, c) => {
-    setHighlighted(prev => { const next = new Set(prev); const key = `${r},${c}`; if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const [selectedCells, setSelectedCells] = useState([]);
+  const [highlightedCells, setHighlightedCells] = useState(new Set());
+  const [foundCells, setFoundCells] = useState(new Set());
+  const [flashMsg, setFlashMsg] = useState('');
+  const [wrongFlash, setWrongFlash] = useState(new Set());
+
+  const getCellsInLine = (start, end) => {
+    const cells = [];
+    const dr = Math.sign(end.r - start.r);
+    const dc = Math.sign(end.c - start.c);
+    if (dr === 0 && dc === 0) { cells.push(`${start.r},${start.c}`); return cells; }
+    let r = start.r, c = start.c;
+    const maxSteps = Math.max(Math.abs(end.r - start.r), Math.abs(end.c - start.c));
+    for (let i = 0; i <= maxSteps; i++) {
+      cells.push(`${r},${c}`);
+      r += dr; c += dc;
+    }
+    return cells;
   };
-  const handleInput = (val) => {
-    setWordInput(val.toUpperCase());
-    onAnswer(val.toUpperCase());
+
+  const handleMouseDown = (r, c) => {
+    setSelecting(true);
+    setStartCell({ r, c });
+    setSelectedCells([`${r},${c}`]);
   };
+
+  const handleMouseEnter = (r, c) => {
+    if (!selecting || !startCell) return;
+    const cells = getCellsInLine(startCell, { r, c });
+    setSelectedCells(cells);
+  };
+
+  const handleMouseUp = (r, c) => {
+    if (!selecting || !startCell) return;
+    setSelecting(false);
+    const cells = getCellsInLine(startCell, { r, c });
+    const selectedWord = cells.map(key => {
+      const [cr, cc] = key.split(',').map(Number);
+      return grid[cr]?.[cc] || '';
+    }).join('');
+    const reversed = selectedWord.split('').reverse().join('');
+    const matchIdx = words.findIndex(w => w.toUpperCase() === selectedWord || w.toUpperCase() === reversed);
+    if (matchIdx !== -1 && !foundWords.includes(words[matchIdx])) {
+      const newFound = [...foundWords, words[matchIdx]];
+      setFoundWords(newFound);
+      setFoundCells(prev => { const n = new Set(prev); cells.forEach(c => n.add(c)); return n; });
+      setFlashMsg(`#${newFound.length} Found`);
+      setTimeout(() => setFlashMsg(''), 2000);
+      onAnswer(JSON.stringify(newFound));
+    } else if (matchIdx === -1) {
+      setWrongFlash(new Set(cells));
+      setTimeout(() => setWrongFlash(new Set()), 500);
+    }
+    setSelectedCells([]);
+    setStartCell(null);
+  };
+
+  const allFound = foundWords.length >= words.length;
+
   return (
-    <div>
-      <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '0.8rem' }}>Find the hidden word in the grid below, then type it in the box:</p>
-      <div style={{ display: 'inline-grid', gridTemplateColumns: `repeat(10, 32px)`, gap: 2, marginBottom: '1rem', overflowX: 'auto' }}>
+    <div style={{ textAlign: 'center', userSelect: 'none' }}>
+      <h4 style={{ color: 'var(--secondary)', marginBottom: '0.3rem' }}>Word Search Challenge</h4>
+      {extraData.theme && <p style={{ color: 'var(--text-bright)', fontSize: '0.9rem' }}>Theme: {extraData.theme}</p>}
+      <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>Find all hidden words in the grid</p>
+      <p style={{ color: 'var(--text-bright)', fontWeight: 600, marginBottom: '1rem' }}>Total Words: {words.length}</p>
+
+      {flashMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(0,206,201,0.9)', color: '#fff', padding: '1rem 2rem', borderRadius: 12, fontSize: '1.5rem', fontWeight: 800, zIndex: 1000, animation: 'fadeInOut 2s' }}>{flashMsg}</div>
+      )}
+
+      <style>{`@keyframes fadeInOut { 0% { opacity: 0; transform: translate(-50%,-50%) scale(0.5); } 20% { opacity: 1; transform: translate(-50%,-50%) scale(1.1); } 80% { opacity: 1; } 100% { opacity: 0; } }`}</style>
+
+      <div style={{ display: 'inline-grid', gridTemplateColumns: `repeat(${gridSize}, 30px)`, gap: 1, marginBottom: '1rem', touchAction: 'none' }}
+        onMouseLeave={() => { if (selecting) { setSelecting(false); setSelectedCells([]); setStartCell(null); } }}>
         {grid.map((row, r) => row.map((cell, c) => {
-          const isHL = highlighted.has(`${r},${c}`);
+          const key = `${r},${c}`;
+          const isSelected = selectedCells.includes(key);
+          const isFound = foundCells.has(key);
+          const isWrong = wrongFlash.has(key);
           return (
-            <button key={`${r}-${c}`} onClick={() => handleCellClick(r, c)}
-              style={{ width: 32, height: 32, borderRadius: 4, background: isHL ? 'rgba(108,92,231,0.5)' : 'var(--bg-input)', border: `1px solid ${isHL ? 'var(--primary)' : 'var(--border)'}`, color: 'var(--text-bright)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.1s', fontFamily: 'monospace' }}>
+            <div key={key}
+              onMouseDown={() => handleMouseDown(r, c)}
+              onMouseEnter={() => handleMouseEnter(r, c)}
+              onMouseUp={() => handleMouseUp(r, c)}
+              style={{
+                width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'monospace', fontWeight: 700, fontSize: '0.8rem', borderRadius: 3, cursor: 'pointer',
+                background: isWrong ? 'rgba(255,107,107,0.5)' : isFound ? 'rgba(0,206,201,0.4)' : isSelected ? 'rgba(108,92,231,0.4)' : 'var(--bg-input)',
+                border: `1px solid ${isFound ? '#00cec9' : isSelected ? '#6c5ce7' : 'var(--border)'}`,
+                color: 'var(--text-bright)', transition: 'background 0.15s'
+              }}>
               {cell}
-            </button>
+            </div>
           );
         }))}
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-        <input value={wordInput} onChange={e => handleInput(e.target.value)} placeholder="Type the word you found..." style={{ flex: 1, fontFamily: 'monospace', letterSpacing: 3, fontSize: '1.1rem', textTransform: 'uppercase' }} maxLength={30} />
-        {wordInput && <button onClick={() => { setWordInput(''); onAnswer(''); setHighlighted(new Set()); }} style={{ background: 'none', color: 'var(--danger)', border: 'none', cursor: 'pointer' }}>✕</button>}
+
+      <div style={{ marginBottom: '1rem' }}>
+        <p style={{ color: 'var(--text-bright)', fontWeight: 600 }}>Words Found: {foundWords.length} / {words.length}</p>
+        <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '0.3rem' }}>
+          {words.map((_, i) => (
+            <div key={i} style={{
+              width: 36, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `1px solid ${i < foundWords.length ? '#00b894' : 'var(--border)'}`,
+              borderRadius: 4, fontSize: '0.75rem', fontWeight: 600,
+              background: i < foundWords.length ? 'rgba(0,184,148,0.2)' : 'transparent',
+              color: i < foundWords.length ? '#00b894' : 'var(--text-dim)'
+            }}>
+              {i + 1} {i < foundWords.length ? '\u2714' : ''}
+            </div>
+          ))}
+        </div>
       </div>
-      {wordInput && <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginTop: '0.3rem' }}>Your answer: <strong style={{ color: 'var(--secondary)', fontFamily: 'monospace', letterSpacing: 2 }}>{wordInput}</strong></p>}
+
+      {allFound && (
+        <div style={{ padding: '1.5rem', background: 'rgba(0,206,201,0.1)', borderRadius: 12, border: '1px solid rgba(0,206,201,0.3)' }}>
+          <h3 style={{ color: 'var(--secondary)', marginBottom: '0.3rem' }}>All Words Found!</h3>
+          <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>{foundWords.length}/{words.length} completed</p>
+        </div>
+      )}
     </div>
   );
 }

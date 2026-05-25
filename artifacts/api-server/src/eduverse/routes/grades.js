@@ -1033,6 +1033,9 @@ function buildCombinedSheetData(databaseId, section) {
   const weights = db.prepare('SELECT * FROM grading_weights WHERE database_id = ?').get(databaseId);
   const w = weights || {};
 
+  const activities = db.prepare('SELECT * FROM activity_config WHERE database_id = ? ORDER BY period, type, slot').all(databaseId);
+  const examTypes = db.prepare('SELECT * FROM exam_types WHERE database_id = ? ORDER BY side, slot').all(databaseId);
+
   const allScores = db.prepare('SELECT * FROM student_scores WHERE database_id = ?').all(databaseId);
   const allExamScores = db.prepare('SELECT * FROM exam_scores WHERE database_id = ?').all(databaseId);
 
@@ -1064,6 +1067,15 @@ function buildCombinedSheetData(databaseId, section) {
     });
   }
 
+  const scoreMap = new Map();
+  allScores.forEach((s) => {
+    scoreMap.set(`${s.student_id}|${s.period}|${s.score_type}|${s.slot}`, s.score || 0);
+  });
+  const examScoreMap = new Map();
+  allExamScores.forEach((e) => {
+    examScoreMap.set(`${e.student_id}|${e.side}|${e.slot}`, e.score || 0);
+  });
+
   const students = studentsRaw.map((st) => {
     const scores = scoresBySid[st.student_id] || [];
     const exams = examsBySid[st.student_id] || [];
@@ -1086,6 +1098,18 @@ function buildCombinedSheetData(databaseId, section) {
       quizScores[q.id] = v !== undefined ? Number(v) : null;
     });
 
+    const activityScores = {};
+    activities.forEach((a) => {
+      const key = `${a.period}|${a.type}|${a.slot}`;
+      activityScores[key] = scoreMap.get(`${st.student_id}|${a.period}|${a.type}|${a.slot}`) ?? 0;
+    });
+
+    const examScores = {};
+    examTypes.forEach((e) => {
+      const key = `${e.side}|${e.slot}`;
+      examScores[key] = examScoreMap.get(`${st.student_id}|${e.side}|${e.slot}`) ?? 0;
+    });
+
     return {
       studentId: st.student_id,
       thaiName: st.thai_name || '',
@@ -1099,11 +1123,19 @@ function buildCombinedSheetData(databaseId, section) {
       finalExamTotal: finalExamTotal.toFixed(2),
       overallTotal: overallTotal.toFixed(2),
       modeAResult: overallTotal >= passScore ? 'PASSED' : 'FAILED',
-      quizScores
+      quizScores,
+      activityScores,
+      examScores
     };
   });
 
-  return { quizColumns: quizColumns.map((q) => ({ id: q.id, title: q.title || '', type: q.type || 'QUIZ', subject: q.subject || '', passingScore: q.passing_score ?? 50 })), students };
+  return {
+    quizColumns: quizColumns.map((q) => ({ id: q.id, title: q.title || '', type: q.type || 'QUIZ', subject: q.subject || '', passingScore: q.passing_score ?? 50 })),
+    students,
+    activities: activities.map(a => ({ period: a.period, type: a.type, slot: a.slot, name: a.name || '', maxScore: a.max_score || 0 })),
+    exams: examTypes.map(e => ({ side: e.side, slot: e.slot, typeName: e.type_name || '', maxScore: e.max_score || 0 })),
+    weights: w
+  };
 }
 
 router.get('/grading-sheet/combined', requireGradeRead(dbIdFromQuery), (req, res) => {
