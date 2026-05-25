@@ -25,13 +25,10 @@ export function setupEduverse(app: any): void {
 
   app.use(compression());
 
-  // Serve built React frontend when running in Electron/production mode
+  // Serve built React frontend static assets (before API routes for performance)
   const frontendPath = process.env.FRONTEND_PATH;
   if (frontendPath && fs.existsSync(frontendPath)) {
     app.use(express.static(frontendPath));
-    app.get('*', (_req: any, res: any) => {
-      res.sendFile(path.join(frontendPath, 'index.html'));
-    });
   }
 
   app.use('/uploads/quiz-media', (req: any, res: any, next: any) => {
@@ -82,6 +79,14 @@ export function setupEduverse(app: any): void {
   const staticDir = process.env.EDUVERSE_STATIC_DIR;
   if (staticDir && fs.existsSync(staticDir)) {
     app.use(express.static(staticDir));
+  }
+
+  // SPA catch-all: must come AFTER all API routes so /api/* is not intercepted
+  if (frontendPath && fs.existsSync(frontendPath)) {
+    app.get('{*path}', (_req: any, res: any) => {
+      res.sendFile(path.join(frontendPath, 'index.html'));
+    });
+  } else if (staticDir && fs.existsSync(staticDir)) {
     app.get('{*path}', (_req: any, res: any) => {
       res.sendFile(path.join(staticDir, 'index.html'));
     });
