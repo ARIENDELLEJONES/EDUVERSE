@@ -73,7 +73,7 @@ export function setupEduverse(app: any): void {
   const staticDir = process.env.EDUVERSE_STATIC_DIR;
   if (staticDir && fs.existsSync(staticDir)) {
     app.use(express.static(staticDir));
-    app.get('*', (_req: any, res: any) => {
+    app.get('{*path}', (_req: any, res: any) => {
       res.sendFile(path.join(staticDir, 'index.html'));
     });
   }
