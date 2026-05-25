@@ -1,13 +1,12 @@
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage, dialog } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
 const SERVER_PORT = 5000;
 const isDev = !app.isPackaged;
 
-let serverProcess = null;
 let tray = null;
 let mainWindow = null;
 let serverReady = false;
@@ -28,7 +27,7 @@ function getFrontendPath() {
 }
 
 function startServer() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const serverScript = getServerScript();
     const frontendPath = getFrontendPath();
     const userDataPath = app.getPath('userData');
@@ -37,53 +36,42 @@ function startServer() {
     // Ensure userData dir exists
     if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
 
-    const env = {
-      ...process.env,
-      PORT: String(SERVER_PORT),
-      NODE_ENV: 'production',
-      DATABASE_PATH: dbPath,
-      FRONTEND_PATH: frontendPath,
-    };
+    // Set environment variables BEFORE importing the server module
+    process.env.PORT = String(SERVER_PORT);
+    process.env.NODE_ENV = 'production';
+    process.env.DATABASE_PATH = dbPath;
+    process.env.FRONTEND_PATH = frontendPath;
 
-    serverProcess = spawn(process.execPath, ['--enable-source-maps', serverScript], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-
-    serverProcess.stdout.on('data', (d) => {
-      const msg = d.toString();
-      if (msg.includes('listening') || msg.includes('Server')) {
-        serverReady = true;
-        resolve(true);
-      }
-    });
-
-    serverProcess.stderr.on('data', () => {});
-
-    serverProcess.on('error', (err) => {
-      dialog.showErrorBox('EDUVERSE — Server Error', `Could not start server:\n${err.message}`);
-      resolve(false);
-    });
-
-    // Fallback: poll for readiness
-    let elapsed = 0;
-    const poll = setInterval(async () => {
-      elapsed += 500;
-      try {
-        await new Promise((res, rej) => {
-          const req = http.get(`http://localhost:${SERVER_PORT}/api/quiz/list`, (r) => {
-            if (r.statusCode < 500) { serverReady = true; resolve(true); res(); }
-            else rej();
+    try {
+      // Import the server module directly in-process
+      const serverUrl = pathToFileURL(serverScript).href;
+      await import(serverUrl);
+      serverReady = true;
+      resolve(true);
+    } catch (err) {
+      // If direct import fails, try polling (server might have started before error)
+      let elapsed = 0;
+      const poll = setInterval(async () => {
+        elapsed += 500;
+        try {
+          await new Promise((res, rej) => {
+            const req = http.get(`http://localhost:${SERVER_PORT}/api/quiz/list`, (r) => {
+              if (r.statusCode < 500) { serverReady = true; resolve(true); res(); }
+              else rej();
+            });
+            req.on('error', rej);
+            req.setTimeout(800, () => { req.destroy(); rej(); });
           });
-          req.on('error', rej);
-          req.setTimeout(800, () => { req.destroy(); rej(); });
-        });
-        clearInterval(poll);
-      } catch {
-        if (elapsed >= 15000) { clearInterval(poll); resolve(false); }
-      }
-    }, 500);
+          clearInterval(poll);
+        } catch {
+          if (elapsed >= 10000) {
+            clearInterval(poll);
+            dialog.showErrorBox('EDUVERSE — Server Error', `Could not start server:\n${err.message}\n\n${err.stack || ''}`);
+            resolve(false);
+          }
+        }
+      }, 500);
+    }
   });
 }
 
@@ -147,10 +135,6 @@ function createWindow() {
 
 app.on('before-quit', () => {
   app.isQuiting = true;
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
-  }
 });
 
 app.on('window-all-closed', () => {
