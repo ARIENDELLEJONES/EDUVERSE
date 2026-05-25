@@ -513,6 +513,54 @@ export function initDatabase() {
   migrate('CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)');
   migrate("UPDATE quiz_teachers SET password = 'teacher123' WHERE username = 'teacher' AND password = 'teacher'");
 
+  // ── Live Performance tables ────────────────────────────────────
+  migrate(`CREATE TABLE IF NOT EXISTS performances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    database_id INTEGER NOT NULL,
+    grade_level TEXT NOT NULL,
+    section TEXT NOT NULL,
+    title TEXT NOT NULL,
+    lesson_number TEXT DEFAULT '',
+    performance_type TEXT NOT NULL,
+    max_score REAL DEFAULT 100,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (database_id) REFERENCES grade_databases(id)
+  )`);
+
+  migrate(`CREATE TABLE IF NOT EXISTS performance_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    performance_id INTEGER NOT NULL,
+    student_id TEXT NOT NULL,
+    score REAL DEFAULT 0,
+    saved_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (performance_id) REFERENCES performances(id),
+    UNIQUE(performance_id, student_id)
+  )`);
+
+  migrate(`CREATE TABLE IF NOT EXISTS performance_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    database_id INTEGER NOT NULL,
+    allowed_percentage_weight REAL DEFAULT 100,
+    midterm_slot INTEGER DEFAULT -1,
+    final_slot INTEGER DEFAULT -1,
+    UNIQUE(database_id)
+  )`);
+
+  // ── Grading weights: add Other Activities columns ──────────────
+  migrate("ALTER TABLE grading_weights ADD COLUMN other_activities_midterm REAL DEFAULT 0");
+  migrate("ALTER TABLE grading_weights ADD COLUMN other_activities_final REAL DEFAULT 0");
+
+  // ── Quiz intro/result customization ────────────────────────────
+  migrate("ALTER TABLE quizzes ADD COLUMN intro_message TEXT DEFAULT ''");
+  migrate("ALTER TABLE quizzes ADD COLUMN pass_message TEXT DEFAULT ''");
+  migrate("ALTER TABLE quizzes ADD COLUMN fail_message TEXT DEFAULT ''");
+
+  // ── Per-question scoring options ───────────────────────────────
+  migrate("ALTER TABLE questions ADD COLUMN question_time_limit INTEGER DEFAULT 0");
+  migrate("ALTER TABLE questions ADD COLUMN minus_points REAL DEFAULT 0");
+  migrate("ALTER TABLE questions ADD COLUMN points_per_correct REAL DEFAULT 0");
+  migrate("ALTER TABLE questions ADD COLUMN points_per_wrong REAL DEFAULT 0");
+
   return db;
 }
 

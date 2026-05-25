@@ -178,7 +178,9 @@ export default function GradingSheetEditor({
           pass_final: w.passFinal,
           pass_overall: w.passOverall,
           freeze_final: w.freezeFinal,
-          custom_formula: w.customFormula
+          custom_formula: w.customFormula,
+          other_activities_midterm: w.otherActivitiesMidterm,
+          other_activities_final: w.otherActivitiesFinal
         }),
         activityUpdates: (data.activities || []).map((a) => ({
           period: a.period,
@@ -341,23 +343,146 @@ export default function GradingSheetEditor({
   );
 }
 
+function getGradeLabel(equiv) {
+  if (equiv === '' || equiv == null || isNaN(equiv)) return '';
+  const n = Number(equiv);
+  if (n > 100) return { text: 'TOO MUCH', color: '#d63031' };
+  if (n >= 80) return { text: 'Excellent — A — 4', color: '#00b894' };
+  if (n >= 75) return { text: 'Very Good — AB — 3.5', color: '#00cec9' };
+  if (n >= 70) return { text: 'Good — B — 3', color: '#0984e3' };
+  if (n >= 65) return { text: 'Fairly Good — BC — 2.5', color: '#6c5ce7' };
+  if (n >= 60) return { text: 'Fair — C — 2', color: '#fdcb6e' };
+  if (n >= 55) return { text: 'Poor — CD — 1.5', color: '#e17055' };
+  if (n >= 50) return { text: 'Very Poor — D — 1', color: '#d63031' };
+  return { text: 'FAIL — F — F', color: '#ff0000' };
+}
+
+function CaseHeader({ num, title, bg }) {
+  return (
+    <th style={{ background: bg || 'rgba(108,92,231,0.08)', padding: '4px 8px', fontWeight: 700, fontSize: '0.7rem', whiteSpace: 'nowrap', borderBottom: '2px solid var(--border)' }}>
+      <div style={{ color: 'var(--primary)', fontSize: '0.65rem' }}>CASE {num}</div>
+      <div>{title}</div>
+    </th>
+  );
+}
+
 function GradesSheetTable({ data, canEdit, onWeight, onActivity, onExam, onStudentActivity, onStudentExam }) {
   const w = data.weights || {};
   const activities = data.activities || [];
   const exams = data.exams || [];
   const students = data.students || [];
 
+  const midActs = activities.filter(a => a.period === 'midterm' && a.type !== 'other');
+  const midOther = activities.filter(a => a.period === 'midterm' && a.type === 'other');
+  const finInitActs = activities.filter(a => a.period === 'final_initial' && a.type !== 'other');
+  const finOther = activities.filter(a => a.period === 'final_initial' && a.type === 'other');
+  const finFinalActs = activities.filter(a => a.period === 'final_final' && a.type !== 'other');
+  const midExams = exams.filter(e => e.side === 'midterm');
+  const finExams = exams.filter(e => e.side === 'final');
+
   const weightFields = [
     { key: 'midtermCollective', label: 'Midterm Collective %' },
-    { key: 'finalInitial', label: 'Final Initial %' },
-    { key: 'finalFinal', label: 'Final Final %' },
+    { key: 'otherActivitiesMidterm', label: 'Other Activities-Midterm %' },
     { key: 'midtermExam', label: 'Midterm Exam %' },
+    { key: 'finalInitial', label: 'Final Collective-Initial %' },
+    { key: 'otherActivitiesFinal', label: 'Other Activities-Final %' },
+    { key: 'finalFinal', label: 'Final Collective-Final %' },
     { key: 'finalExam', label: 'Final Exam %' },
     { key: 'passMidterm', label: 'Pass Midterm' },
-    { key: 'passInitial', label: 'Pass Initial' },
-    { key: 'passFinal', label: 'Pass Final' },
+    { key: 'passInitial', label: 'Pass Final Initial' },
+    { key: 'passFinal', label: 'Pass Final Final' },
     { key: 'passOverall', label: 'Pass Overall' }
   ];
+
+  const computeStudentRow = (st) => {
+    const score = (key) => Number(st.activityScores?.[key]) || 0;
+    const eScore = (key) => Number(st.examScores?.[key]) || 0;
+
+    // CASE 1: Midterm collective scores
+    let case1Total = 0, case1Max = 0;
+    midActs.forEach(a => { case1Total += score(activityKey(a.period, a.type, a.slot)); case1Max += Number(a.maxScore) || 0; });
+
+    // CASE 2: Other Activities Midterm
+    let case2Total = 0, case2Max = 0;
+    midOther.forEach(a => { case2Total += score(activityKey(a.period, a.type, a.slot)); case2Max += Number(a.maxScore) || 0; });
+
+    // CASE 3: Total & Equivalent
+    const case3TotalScore = case1Total + case2Total;
+    const case3TotalMax = case1Max + case2Max;
+    const midCollWt = (Number(w.midtermCollective) || 0) / 100;
+    const otherMidWt = (Number(w.otherActivitiesMidterm) || 0) / 100;
+    const case3Equiv = case3TotalMax > 0 ? ((case3TotalScore / case3TotalMax) * (midCollWt + otherMidWt)) * 100 : 0;
+
+    // CASE 4: Midterm Exam
+    let case4Total = 0, case4Max = 0;
+    midExams.forEach(e => { case4Total += eScore(examKey(e.side, e.slot)); case4Max += Number(e.maxScore) || 0; });
+
+    // CASE 5: Midterm Exam Equivalent
+    const midExamWt = (Number(w.midtermExam) || 0) / 100;
+    const case5Equiv = case4Max > 0 ? ((case4Total / case4Max) * midExamWt) * 100 : 0;
+
+    // CASE 6: Total & Remarks (Midterm)
+    const case6Total = case3Equiv + case5Equiv;
+    const passMidterm = Number(w.passMidterm) || 0;
+    const case6Remarks = case6Total >= passMidterm ? 'PASSED' : 'FAILED';
+
+    // CASE 7: Final Collective Initial
+    let case7Total = 0, case7Max = 0;
+    finInitActs.forEach(a => { case7Total += score(activityKey(a.period, a.type, a.slot)); case7Max += Number(a.maxScore) || 0; });
+
+    // CASE 8: Other Activities Final
+    let case8Total = 0, case8Max = 0;
+    finOther.forEach(a => { case8Total += score(activityKey(a.period, a.type, a.slot)); case8Max += Number(a.maxScore) || 0; });
+
+    // CASE 9: Final Collective Final
+    let case9Total = 0, case9Max = 0;
+    finFinalActs.forEach(a => { case9Total += score(activityKey(a.period, a.type, a.slot)); case9Max += Number(a.maxScore) || 0; });
+
+    // CASE 10: Total & Equivalent (Final Collective Initial)
+    const case10TotalScore = case7Total + case8Total;
+    const case10TotalMax = case7Max + case8Max;
+    const finInitWt = (Number(w.finalInitial) || 0) / 100;
+    const otherFinWt = (Number(w.otherActivitiesFinal) || 0) / 100;
+    const case10Equiv = case10TotalMax > 0 ? ((case10TotalScore / case10TotalMax) * (finInitWt + otherFinWt)) * 100 : 0;
+
+    // CASE 11: Total & Equivalent (Final Collective Final)
+    const finFinalWt = (Number(w.finalFinal) || 0) / 100;
+    const case11Equiv = case9Max > 0 ? ((case9Total / case9Max) * finFinalWt) * 100 : 0;
+
+    // CASE 12: Total & Remarks (Collective + Exam up to Final)
+    const case12Total = case3Equiv + case5Equiv + case10Equiv + case11Equiv;
+    const passFinalInit = Number(w.passInitial) || 0;
+    const passFinalFin = Number(w.passFinal) || 0;
+    const case12Remarks = case12Total >= (passFinalInit + passFinalFin) ? 'PASSED' : 'FAILED';
+
+    // CASE 13: Final Exam
+    let case13Total = 0, case13Max = 0;
+    finExams.forEach(e => { case13Total += eScore(examKey(e.side, e.slot)); case13Max += Number(e.maxScore) || 0; });
+
+    // CASE 14: Final Exam Equivalent
+    const finExamWt = (Number(w.finalExam) || 0) / 100;
+    const case14Equiv = case13Max > 0 ? ((case13Total / case13Max) * finExamWt) * 100 : 0;
+
+    // CASE 15: Overall Total & Grade
+    const case15Total = case3Equiv + case5Equiv + case10Equiv + case11Equiv + case14Equiv;
+    const gradeInfo = getGradeLabel(case15Total);
+
+    return {
+      case1Total, case1Max, case2Total, case2Max,
+      case3TotalScore, case3TotalMax, case3Equiv,
+      case4Total, case4Max, case5Equiv,
+      case6Total, case6Remarks,
+      case7Total, case7Max, case8Total, case8Max, case9Total, case9Max,
+      case10TotalScore, case10TotalMax, case10Equiv,
+      case11Equiv, case12Total, case12Remarks,
+      case13Total, case13Max, case14Equiv,
+      case15Total, gradeInfo
+    };
+  };
+
+  const thStyle = { minWidth: 90, background: 'rgba(108,92,231,0.08)', fontSize: '0.7rem', padding: '4px 6px' };
+  const thExam = { minWidth: 90, background: 'rgba(0,206,201,0.08)', fontSize: '0.7rem', padding: '4px 6px' };
+  const thCalc = { minWidth: 70, background: 'rgba(253,203,110,0.12)', fontSize: '0.7rem', padding: '4px 6px', fontWeight: 600 };
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -376,88 +501,190 @@ function GradesSheetTable({ data, canEdit, onWeight, onActivity, onExam, onStude
               onChange={(e) => onWeight('freezeFinal', e.target.checked)} /> Freeze Final
           </label>
         </Toolbar>
-        <div style={{ marginTop: 8 }}>
-          <span style={{ color: 'var(--text-dim)', display: 'block', fontSize: '0.75rem' }}>Custom Formula (optional)</span>
-          <input
-            type="text"
-            style={{ width: '100%' }}
-            disabled={!canEdit}
-            value={w.customFormula ?? ''}
-            onChange={(e) => onWeight('customFormula', e.target.value)}
-            placeholder="Use variables: midtermCollective, finalInitial, finalFinal, midtermExam, finalExam"
-          />
-        </div>
       </div>
 
-      <table style={{ fontSize: '0.8rem', minWidth: '100%' }}>
+      <table style={{ fontSize: '0.75rem', minWidth: '100%', borderCollapse: 'collapse' }}>
         <thead>
+          {/* CASE group headers */}
+          <tr style={{ background: 'var(--bg-card)' }}>
+            <th colSpan={5} style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 3 }}></th>
+            {midActs.length > 0 && <CaseHeader num={1} title="Midterm Collective" />}
+            {midActs.slice(1).map((_, i) => <th key={`c1p-${i}`} style={thStyle}></th>)}
+            {midOther.length > 0 && <CaseHeader num={2} title="Other Act. Midterm" />}
+            {midOther.slice(1).map((_, i) => <th key={`c2p-${i}`} style={thStyle}></th>)}
+            <CaseHeader num={3} title="Total" />
+            <th style={thCalc}>Equiv</th>
+            {midExams.length > 0 && <CaseHeader num={4} title="Midterm Exam" />}
+            {midExams.slice(1).map((_, i) => <th key={`c4p-${i}`} style={thExam}></th>)}
+            <CaseHeader num={5} title="Equiv" />
+            <CaseHeader num={6} title="Total" />
+            <th style={thCalc}>Remarks</th>
+            {finInitActs.length > 0 && <CaseHeader num={7} title="Final Init." />}
+            {finInitActs.slice(1).map((_, i) => <th key={`c7p-${i}`} style={thStyle}></th>)}
+            {finOther.length > 0 && <CaseHeader num={8} title="Other Act. Final" />}
+            {finOther.slice(1).map((_, i) => <th key={`c8p-${i}`} style={thStyle}></th>)}
+            {finFinalActs.length > 0 && <CaseHeader num={9} title="Final Final" />}
+            {finFinalActs.slice(1).map((_, i) => <th key={`c9p-${i}`} style={thStyle}></th>)}
+            <CaseHeader num={10} title="Total" />
+            <th style={thCalc}>Equiv</th>
+            <CaseHeader num={11} title="Total" />
+            <th style={thCalc}>Equiv</th>
+            <CaseHeader num={12} title="Total" />
+            <th style={thCalc}>Remarks</th>
+            {finExams.length > 0 && <CaseHeader num={13} title="Final Exam" />}
+            {finExams.slice(1).map((_, i) => <th key={`c13p-${i}`} style={thExam}></th>)}
+            <CaseHeader num={14} title="Equiv" />
+            <CaseHeader num={15} title="Total" />
+            <th style={{ ...thCalc, minWidth: 140 }}>Grade</th>
+          </tr>
+          {/* Column detail headers */}
           <tr>
-            <th rowSpan={2} style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 2 }}>Student ID</th>
-            <th rowSpan={2}>Thai</th>
-            <th rowSpan={2}>English</th>
-            <th rowSpan={2}>Section</th>
-            <th rowSpan={2}>#</th>
-            {activities.map((a, i) => (
-              <th key={`a-${i}`} style={{ minWidth: 120, background: 'rgba(108,92,231,0.08)' }}>
-                <div style={{ color: 'var(--primary)', fontWeight: 600 }}>{PERIOD_LABELS[a.period] || a.period}</div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{a.type} · slot {a.slot + 1}</div>
-                <input style={{ width: '100%', marginTop: 2 }} disabled={!canEdit} value={a.name || ''} placeholder="Activity name"
-                  onChange={(e) => onActivity(i, 'name', e.target.value)} />
-                <div style={{ fontSize: '0.7rem' }}>Perfect:
-                  <input type="number" style={{ width: 48, marginLeft: 4 }} disabled={!canEdit} value={a.maxScore ?? ''}
-                    onChange={(e) => onActivity(i, 'maxScore', parseFloat(e.target.value) || 0)} />
-                </div>
+            <th style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', zIndex: 2 }}>ID</th>
+            <th>Thai Name</th><th>English Name</th><th>Section</th><th>#</th>
+            {midActs.map((a, i) => (
+              <th key={`ma-${i}`} style={thStyle}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={a.name || ''} placeholder={`Slot ${a.slot + 1}`}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'name', e.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={a.maxScore ?? ''}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'maxScore', parseFloat(e.target.value) || 0)} /></div>
               </th>
             ))}
-            {exams.map((e, i) => (
-              <th key={`e-${i}`} style={{ minWidth: 110, background: 'rgba(0,206,201,0.08)' }}>
-                <div>{String(e.side || '').toUpperCase()} Exam {e.slot + 1}</div>
-                <input style={{ width: '100%', marginTop: 2 }} disabled={!canEdit} value={e.typeName || ''} placeholder="Exam name"
-                  onChange={(ev) => onExam(i, 'typeName', ev.target.value)} />
-                <div style={{ fontSize: '0.7rem' }}>Perfect:
-                  <input type="number" style={{ width: 48 }} disabled={!canEdit} value={e.maxScore ?? ''}
-                    onChange={(ev) => onExam(i, 'maxScore', parseFloat(ev.target.value) || 0)} />
-                </div>
+            {midOther.map((a, i) => (
+              <th key={`mo-${i}`} style={thStyle}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={a.name || ''} placeholder={`Other ${a.slot + 1}`}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'name', e.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={a.maxScore ?? ''}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'maxScore', parseFloat(e.target.value) || 0)} /></div>
               </th>
             ))}
+            <th style={thCalc}>Total</th><th style={thCalc}>Equiv</th>
+            {midExams.map((e, i) => (
+              <th key={`me-${i}`} style={thExam}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={e.typeName || ''} placeholder={`Exam ${e.slot + 1}`}
+                  onChange={(ev) => onExam(exams.indexOf(e), 'typeName', ev.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={e.maxScore ?? ''}
+                  onChange={(ev) => onExam(exams.indexOf(e), 'maxScore', parseFloat(ev.target.value) || 0)} /></div>
+              </th>
+            ))}
+            <th style={thCalc}>Equiv</th>
+            <th style={thCalc}>Total</th><th style={thCalc}>Result</th>
+            {finInitActs.map((a, i) => (
+              <th key={`fi-${i}`} style={thStyle}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={a.name || ''} placeholder={`Slot ${a.slot + 1}`}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'name', e.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={a.maxScore ?? ''}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'maxScore', parseFloat(e.target.value) || 0)} /></div>
+              </th>
+            ))}
+            {finOther.map((a, i) => (
+              <th key={`fo-${i}`} style={thStyle}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={a.name || ''} placeholder={`Other ${a.slot + 1}`}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'name', e.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={a.maxScore ?? ''}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'maxScore', parseFloat(e.target.value) || 0)} /></div>
+              </th>
+            ))}
+            {finFinalActs.map((a, i) => (
+              <th key={`ff-${i}`} style={thStyle}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={a.name || ''} placeholder={`Slot ${a.slot + 1}`}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'name', e.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={a.maxScore ?? ''}
+                  onChange={(e) => onActivity(activities.indexOf(a), 'maxScore', parseFloat(e.target.value) || 0)} /></div>
+              </th>
+            ))}
+            <th style={thCalc}>Total</th><th style={thCalc}>Equiv</th>
+            <th style={thCalc}>Total</th><th style={thCalc}>Equiv</th>
+            <th style={thCalc}>Total</th><th style={thCalc}>Result</th>
+            {finExams.map((e, i) => (
+              <th key={`fe-${i}`} style={thExam}>
+                <input style={{ width: '100%', fontSize: '0.7rem' }} disabled={!canEdit} value={e.typeName || ''} placeholder={`Exam ${e.slot + 1}`}
+                  onChange={(ev) => onExam(exams.indexOf(e), 'typeName', ev.target.value)} />
+                <div style={{ fontSize: '0.65rem' }}>Max: <input type="number" style={{ width: 40 }} disabled={!canEdit} value={e.maxScore ?? ''}
+                  onChange={(ev) => onExam(exams.indexOf(e), 'maxScore', parseFloat(ev.target.value) || 0)} /></div>
+              </th>
+            ))}
+            <th style={thCalc}>Equiv</th>
+            <th style={thCalc}>Total</th>
+            <th style={{ ...thCalc, minWidth: 140 }}>Grade</th>
           </tr>
         </thead>
         <tbody>
-          {students.map((st, si) => (
-            <tr key={st.studentId}>
-              <td style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', fontWeight: 600 }}>{st.studentId}</td>
-              <td>{st.thaiName}</td>
-              <td>{st.englishName}</td>
-              <td>{st.section}</td>
-              <td>{st.classNumber}</td>
-              {activities.map((a) => {
-                const key = activityKey(a.period, a.type, a.slot);
-                return (
-                  <td key={key}>
-                    <input type="text" inputMode="decimal" style={{ width: 56 }} disabled={!canEdit}
-                      value={st.activityScores?.[key] ?? ''}
-                      onChange={(e) => {
-                        if (!isNumericInput(e.target.value)) return;
-                        onStudentActivity(si, key, e.target.value);
-                      }} />
-                  </td>
-                );
-              })}
-              {exams.map((e) => {
-                const key = examKey(e.side, e.slot);
-                return (
-                  <td key={key}>
-                    <input type="text" inputMode="decimal" style={{ width: 56 }} disabled={!canEdit}
-                      value={st.examScores?.[key] ?? ''}
-                      onChange={(ev) => {
-                        if (!isNumericInput(ev.target.value)) return;
-                        onStudentExam(si, key, ev.target.value);
-                      }} />
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
+          {students.map((st, si) => {
+            const r = computeStudentRow(st);
+            return (
+              <tr key={st.studentId}>
+                <td style={{ position: 'sticky', left: 0, background: 'var(--bg-card)', fontWeight: 600 }}>{st.studentId}</td>
+                <td>{st.thaiName}</td>
+                <td>{st.englishName}</td>
+                <td>{st.section}</td>
+                <td>{st.classNumber}</td>
+                {/* CASE 1 */}
+                {midActs.map(a => {
+                  const key = activityKey(a.period, a.type, a.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.activityScores?.[key] ?? ''}
+                    onChange={e => { if (isNumericInput(e.target.value)) onStudentActivity(si, key, e.target.value); }} /></td>;
+                })}
+                {/* CASE 2 */}
+                {midOther.map(a => {
+                  const key = activityKey(a.period, a.type, a.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.activityScores?.[key] ?? ''}
+                    onChange={e => { if (isNumericInput(e.target.value)) onStudentActivity(si, key, e.target.value); }} /></td>;
+                })}
+                {/* CASE 3 */}
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case3TotalScore}/{r.case3TotalMax}</td>
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case3Equiv.toFixed(1)}</td>
+                {/* CASE 4 */}
+                {midExams.map(e => {
+                  const key = examKey(e.side, e.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.examScores?.[key] ?? ''}
+                    onChange={ev => { if (isNumericInput(ev.target.value)) onStudentExam(si, key, ev.target.value); }} /></td>;
+                })}
+                {/* CASE 5 */}
+                <td style={{ fontWeight: 600, background: 'rgba(0,206,201,0.06)' }}>{r.case5Equiv.toFixed(1)}</td>
+                {/* CASE 6 */}
+                <td style={{ fontWeight: 600 }}>{r.case6Total.toFixed(1)}</td>
+                <td style={{ fontWeight: 700, color: r.case6Remarks === 'PASSED' ? '#00b894' : '#d63031' }}>{r.case6Remarks}</td>
+                {/* CASE 7 */}
+                {finInitActs.map(a => {
+                  const key = activityKey(a.period, a.type, a.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.activityScores?.[key] ?? ''}
+                    onChange={e => { if (isNumericInput(e.target.value)) onStudentActivity(si, key, e.target.value); }} /></td>;
+                })}
+                {/* CASE 8 */}
+                {finOther.map(a => {
+                  const key = activityKey(a.period, a.type, a.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.activityScores?.[key] ?? ''}
+                    onChange={e => { if (isNumericInput(e.target.value)) onStudentActivity(si, key, e.target.value); }} /></td>;
+                })}
+                {/* CASE 9 */}
+                {finFinalActs.map(a => {
+                  const key = activityKey(a.period, a.type, a.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.activityScores?.[key] ?? ''}
+                    onChange={e => { if (isNumericInput(e.target.value)) onStudentActivity(si, key, e.target.value); }} /></td>;
+                })}
+                {/* CASE 10 */}
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case10TotalScore}/{r.case10TotalMax}</td>
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case10Equiv.toFixed(1)}</td>
+                {/* CASE 11 */}
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case9Total}/{r.case9Max}</td>
+                <td style={{ fontWeight: 600, background: 'rgba(253,203,110,0.06)' }}>{r.case11Equiv.toFixed(1)}</td>
+                {/* CASE 12 */}
+                <td style={{ fontWeight: 600 }}>{r.case12Total.toFixed(1)}</td>
+                <td style={{ fontWeight: 700, color: r.case12Remarks === 'PASSED' ? '#00b894' : '#d63031' }}>{r.case12Remarks}</td>
+                {/* CASE 13 */}
+                {finExams.map(e => {
+                  const key = examKey(e.side, e.slot);
+                  return <td key={key}><input type="text" inputMode="decimal" style={{ width: 48 }} disabled={!canEdit} value={st.examScores?.[key] ?? ''}
+                    onChange={ev => { if (isNumericInput(ev.target.value)) onStudentExam(si, key, ev.target.value); }} /></td>;
+                })}
+                {/* CASE 14 */}
+                <td style={{ fontWeight: 600, background: 'rgba(0,206,201,0.06)' }}>{r.case14Equiv.toFixed(1)}</td>
+                {/* CASE 15 */}
+                <td style={{ fontWeight: 700 }}>{r.case15Total.toFixed(1)}</td>
+                <td style={{ fontWeight: 700, color: r.gradeInfo?.color || 'var(--text)', fontSize: '0.7rem', whiteSpace: 'nowrap' }}>{r.gradeInfo?.text || ''}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {students.length === 0 && <p style={{ color: 'var(--text-dim)', marginTop: '1rem' }}>No students in this section.</p>}

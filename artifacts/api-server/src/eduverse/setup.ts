@@ -2,6 +2,7 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import express from 'express';
 import compression from 'compression';
 import { initDatabase } from './db.js';
 import { cacheMiddleware } from './middleware/cache.js';
@@ -77,4 +78,13 @@ export function setupEduverse(app: any): void {
       uptime: process.uptime()
     });
   });
+
+  // Serve frontend static files when EDUVERSE_STATIC_DIR is set
+  const staticDir = process.env.EDUVERSE_STATIC_DIR;
+  if (staticDir && fs.existsSync(staticDir)) {
+    app.use(express.static(staticDir));
+    app.get('{*path}', (_req: any, res: any) => {
+      res.sendFile(path.join(staticDir, 'index.html'));
+    });
+  }
 }

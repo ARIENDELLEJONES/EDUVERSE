@@ -419,20 +419,25 @@ router.post('/weights', requireGradeWrite(dbIdFromBody), (req, res) => {
   const passOverall = b.passOverall ?? b.pass_overall ?? 0;
   const freezeFinal = b.freezeFinal ?? b.freeze_final ?? false;
   const customFormula = b.customFormula ?? b.custom_formula ?? '';
+  const otherActivitiesMidterm = b.otherActivitiesMidterm ?? b.other_activities_midterm ?? 0;
+  const otherActivitiesFinal = b.otherActivitiesFinal ?? b.other_activities_final ?? 0;
 
   db.prepare(`
     INSERT INTO grading_weights (database_id, midterm_collective, final_initial, final_final, midterm_exam, final_exam,
-      pass_midterm, pass_initial, pass_final, pass_overall, freeze_final, custom_formula)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      pass_midterm, pass_initial, pass_final, pass_overall, freeze_final, custom_formula,
+      other_activities_midterm, other_activities_final)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(database_id) DO UPDATE SET
       midterm_collective=excluded.midterm_collective, final_initial=excluded.final_initial,
       final_final=excluded.final_final, midterm_exam=excluded.midterm_exam, final_exam=excluded.final_exam,
       pass_midterm=excluded.pass_midterm, pass_initial=excluded.pass_initial,
       pass_final=excluded.pass_final, pass_overall=excluded.pass_overall, freeze_final=excluded.freeze_final,
-      custom_formula=excluded.custom_formula
+      custom_formula=excluded.custom_formula,
+      other_activities_midterm=excluded.other_activities_midterm, other_activities_final=excluded.other_activities_final
   `).run(databaseId, midtermCollective || 0, finalInitial || 0, finalFinal || 0,
     midtermExam || 0, finalExam || 0, passMidterm || 0, passInitial || 0,
-    passFinal || 0, passOverall || 0, freezeFinal ? 1 : 0, String(customFormula || ''));
+    passFinal || 0, passOverall || 0, freezeFinal ? 1 : 0, String(customFormula || ''),
+    otherActivitiesMidterm || 0, otherActivitiesFinal || 0);
 
   invalidateCache('/api/grades');
   res.json({ success: true, message: 'Grading weights saved' });
@@ -773,7 +778,9 @@ function mapWeightsRow(weights) {
     passFinal: w.pass_final ?? 0,
     passOverall: w.pass_overall ?? 0,
     freezeFinal: Boolean(w.freeze_final),
-    customFormula: w.custom_formula || ''
+    customFormula: w.custom_formula || '',
+    otherActivitiesMidterm: w.other_activities_midterm ?? 0,
+    otherActivitiesFinal: w.other_activities_final ?? 0
   };
 }
 

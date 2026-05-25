@@ -201,6 +201,8 @@ export default function QuizStudentPortal({ user, onLogout, showToast }) {
   const [showLiveGame, setShowLiveGame] = useState(false);
   const [liveJoinPin, setLiveJoinPin] = useState('');
   const [isBlocked, setIsBlocked] = useState(false);
+  const [cheatPopup, setCheatPopup] = useState(false);
+  const [cheatApproved, setCheatApproved] = useState(false);
   const timerRef = useRef(null);
   const autoSaveRef = useRef(null);
   const statusRef = useRef(null);
@@ -287,18 +289,34 @@ export default function QuizStudentPortal({ user, onLogout, showToast }) {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [activeQuiz]);
 
-  // Tab switch detection (preserves anti-cheat from QuizTaker.html)
+  // Tab switch detection + strict mode anti-cheat popup
   useEffect(() => {
     if (!activeQuiz) return;
+    const isStrict = activeQuiz.strictMode || activeQuiz.strict_mode;
     const handler = () => {
       if (document.hidden) {
         setTabSwitchCount(prev => prev + 1);
-        showToast('Tab switch detected! This is recorded.', 'error');
+        if (isStrict && !cheatApproved) {
+          setCheatPopup(true);
+          api.post(`/quiz/${activeQuiz.quizId || activeQuiz.id}/block-student/${user.id || user.studentId}`);
+        } else {
+          showToast('Tab switch detected! This is recorded.', 'error');
+        }
+      }
+    };
+    const preventScreenshot = (e) => {
+      if (isStrict && (e.key === 'PrintScreen' || (e.ctrlKey && e.key === 'c') || (e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4')))) {
+        e.preventDefault();
+        if (!cheatApproved) {
+          setCheatPopup(true);
+          api.post(`/quiz/${activeQuiz.quizId || activeQuiz.id}/block-student/${user.id || user.studentId}`);
+        }
       }
     };
     document.addEventListener('visibilitychange', handler);
-    return () => document.removeEventListener('visibilitychange', handler);
-  }, [activeQuiz]);
+    if (isStrict) document.addEventListener('keydown', preventScreenshot);
+    return () => { document.removeEventListener('visibilitychange', handler); if (isStrict) document.removeEventListener('keydown', preventScreenshot); };
+  }, [activeQuiz, cheatApproved]);
 
   const submitQuiz = useCallback(async () => {
     if (!activeQuiz) return;
@@ -354,6 +372,30 @@ export default function QuizStudentPortal({ user, onLogout, showToast }) {
     const totalQ = activeQuiz.questions.length;
     const qType = (question?.questionType || 'MCQ').toUpperCase();
 
+    if (cheatPopup) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.9)' }}>
+          <div className="card" style={{ maxWidth: 500, textAlign: 'center', border: '2px solid var(--danger)' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠</div>
+            <h2 style={{ color: 'var(--danger)', marginBottom: '0.5rem' }}>CHEATING ISSUE</h2>
+            <p style={{ color: 'var(--text)', marginBottom: '1.5rem', fontSize: '1.1rem' }}>PLEASE ASK YOUR TEACHER FOR APPROVAL TO CONTINUE.</p>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+              <button onClick={async () => {
+                const res = await api.post('/quiz/student-status', { quizId: activeQuiz.quizId || activeQuiz.id, studentId: user.id || user.studentId, currentQuestion: currentQ, tabSwitchCount });
+                if (!res?.isBlocked) { setCheatPopup(false); setCheatApproved(true); showToast('Teacher approved. You may continue.'); }
+                else showToast('Waiting for teacher approval...', 'error');
+              }} className="btn btn-primary" style={{ padding: '0.8rem 1.5rem' }}>
+                Continue
+              </button>
+              <button onClick={() => { setCheatPopup(false); submitQuiz(); }} className="btn btn-danger" style={{ padding: '0.8rem 1.5rem' }}>
+                Submit Answer
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (isBlocked) {
       return (
         <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -407,7 +449,10 @@ export default function QuizStudentPortal({ user, onLogout, showToast }) {
                   </button>
                 </div>
 
-                <h3 style={{ color: 'var(--text-bright)', marginBottom: '1.5rem', fontSize: '1.1rem', lineHeight: 1.5 }}>{question.questionText}</h3>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                  <h3 style={{ color: 'var(--text-bright)', fontSize: '1.1rem', lineHeight: 1.5, flex: 1 }}>{question.questionText}</h3>
+                  <button onClick={() => { const u = new SpeechSynthesisUtterance(question.questionText); speechSynthesis.speak(u); }} title="Read aloud" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'var(--text-dim)', flexShrink: 0, padding: '0.2rem' }}>🔊</button>
+                </div>
 
                 {question.mediaUrl && (
                   <div style={{ marginBottom: '1rem' }}>

@@ -214,7 +214,8 @@ router.get('/:id', (req, res, next) => {
 router.post('/create', (req, res) => {
   const { title, type, period, subject, gradeLevel, passingScore, attemptsAllowed,
     timeLimit, retakeAllowed, randomizeQuestions, randomizeChoices,
-    startDate, deadline, createdBy, questions, gradeLevels, quizMode, strictMode } = req.body;
+    startDate, deadline, createdBy, questions, gradeLevels, quizMode, strictMode,
+    introMessage, passMessage, failMessage } = req.body;
 
   const singleGradeLevel = (gradeLevel && String(gradeLevel).trim())
     || (Array.isArray(gradeLevels) && gradeLevels.length > 0 ? String(gradeLevels[0]).trim() : '')
@@ -225,14 +226,16 @@ router.post('/create', (req, res) => {
     db.prepare(`
       INSERT INTO quizzes (id, title, type, period, subject, grade_level, passing_score, attempts_allowed,
         time_limit, retake_allowed, randomize_questions, randomize_choices, status,
-        created_by, start_date, deadline, question_count, quiz_mode, strict_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_by, start_date, deadline, question_count, quiz_mode, strict_mode,
+        intro_message, pass_message, fail_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, title, type || 'QUIZ', period || 'midterm', subject || '', singleGradeLevel,
       passingScore || 50, attemptsAllowed || 1, timeLimit || 0,
       retakeAllowed || 'NO', randomizeQuestions || 'NO', randomizeChoices || 'NO',
       'DRAFT', createdBy || '', startDate || '', deadline || '',
       (questions && questions.length) || 0,
-      quizMode || 'NORMAL_QUIZ', strictMode ? 1 : 0);
+      quizMode || 'NORMAL_QUIZ', strictMode ? 1 : 0,
+      introMessage || '', passMessage || '', failMessage || '');
 
     if (questions && questions.length > 0) {
       const insertQ = db.prepare(`
@@ -277,7 +280,8 @@ router.post('/create', (req, res) => {
 router.put('/:id', (req, res) => {
   const { title, type, period, subject, gradeLevel, passingScore, attemptsAllowed,
     timeLimit, retakeAllowed, randomizeQuestions, randomizeChoices,
-    startDate, deadline, status, questions, gradeLevels, quizMode, strictMode } = req.body;
+    startDate, deadline, status, questions, gradeLevels, quizMode, strictMode,
+    introMessage, passMessage, failMessage } = req.body;
 
   const existing = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!existing) {
@@ -289,7 +293,7 @@ router.put('/:id', (req, res) => {
     UPDATE quizzes SET title=?, type=?, period=?, subject=?, grade_level=?, passing_score=?,
       attempts_allowed=?, time_limit=?, retake_allowed=?, randomize_questions=?,
       randomize_choices=?, start_date=?, deadline=?, status=?, question_count=?,
-      quiz_mode=?, strict_mode=?
+      quiz_mode=?, strict_mode=?, intro_message=?, pass_message=?, fail_message=?
     WHERE id=?
   `).run(
     title || existing.title, type || existing.type, period || existing.period || 'midterm', subject || existing.subject,
@@ -301,6 +305,9 @@ router.put('/:id', (req, res) => {
     (questions && questions.length) || existing.question_count,
     quizMode || existing.quiz_mode || 'NORMAL_QUIZ',
     strictMode !== undefined ? (strictMode ? 1 : 0) : existing.strict_mode,
+    introMessage ?? existing.intro_message ?? '',
+    passMessage ?? existing.pass_message ?? '',
+    failMessage ?? existing.fail_message ?? '',
     req.params.id
   );
 
