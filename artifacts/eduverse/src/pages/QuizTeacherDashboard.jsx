@@ -1284,9 +1284,9 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                     {perfActiveGame && (
                       <div>
                         {/* Game area with enchanted background */}
-                        <div className="enchanted-bg" style={{ borderRadius: 12, padding: '2rem', marginBottom: '1rem', minHeight: 400 }}>
+                        <div className="enchanted-bg" style={{ borderRadius: 12, padding: '2rem', marginBottom: '1rem', minHeight: 'calc(80vh - 120px)' }}>
                           {/* Firefly dots */}
-                          {Array.from({ length: 8 }).map((_, i) => (
+                          {Array.from({ length: 15 }).map((_, i) => (
                             <div key={i} style={{ position: 'absolute', width: 4, height: 4, borderRadius: '50%', background: '#fdcb6e', animation: `firefly ${3 + i}s infinite ${i * 0.5}s`, left: `${10 + i * 12}%`, top: `${15 + (i % 3) * 25}%`, pointerEvents: 'none' }} />
                           ))}
 
@@ -1332,102 +1332,104 @@ export default function QuizTeacherDashboard({ user, onLogout, showToast }) {
                             </div>
                           )}
 
-                          {/* ASK ME - Two landscape cards */}
+                          {/* ASK ME - Two big glowing cards */}
                           {perfActiveGame.performance_type === 'ASK_ME' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
-                              {!perfAskPair.asker && <button onClick={selectRandomPair} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.8rem 2rem' }}>Select First Pair</button>}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2rem', minHeight: 'calc(70vh - 120px)' }}>
+                              {!perfAskPair.asker && <button onClick={selectRandomPair} className="btn btn-primary" style={{ fontSize: '1.5rem', padding: '1.2rem 3rem', boxShadow: '0 0 30px rgba(108,92,231,0.5)', animation: 'glowPulse 2s infinite' }}>Select First Pair</button>}
                               {perfAskPair.asker && (
                                 <>
-                                  {/* Asker card */}
-                                  <div style={{ background: 'linear-gradient(135deg, #2d3436, #636e72)', borderRadius: 12, padding: '1.5rem 2rem', minWidth: 350, textAlign: 'center', border: '2px solid #fdcb6e' }}>
-                                    <div style={{ color: '#fdcb6e', fontSize: '0.8rem', marginBottom: '0.3rem' }}>WILL ASK THE QUESTION</div>
-                                    <div style={{ color: '#fff', fontSize: '0.8rem' }}>ID: {perfAskPair.asker.student_id}</div>
-                                    <div style={{ color: '#fdcb6e', fontSize: '0.85rem' }}>{perfAskPair.asker.thai_name || '—'}</div>
-                                    <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.5rem' }}>{perfAskPair.asker.english_name}</div>
-                                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', justifyContent: 'center' }}>
-                                      <input type="number" placeholder="Score" value={perfAskScores.askerScore} onChange={e => setPerfAskScores(prev => ({ ...prev, askerScore: e.target.value }))} style={{ width: 80, textAlign: 'center' }} />
-                                      <button onClick={() => savePerfScore(perfAskPair.asker.student_id, perfAskScores.askerScore)} className="btn btn-secondary btn-sm">Save</button>
+                                  <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', justifyContent: 'center', width: '100%' }}>
+                                    {/* Asker card - big glowing */}
+                                    <div style={{ background: 'linear-gradient(135deg, #2d3436, #636e72)', borderRadius: 16, padding: '2.5rem 3rem', minWidth: 380, maxWidth: '45%', flex: 1, textAlign: 'center', border: '3px solid #fdcb6e', boxShadow: '0 0 40px rgba(253,203,110,0.4), inset 0 0 30px rgba(253,203,110,0.05)', animation: 'cardFlip 0.6s' }}>
+                                      <div style={{ color: '#fdcb6e', fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.8rem', textTransform: 'uppercase', letterSpacing: 2, animation: 'glowPulse 3s infinite' }}>WILL ASK THE QUESTION</div>
+                                      <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1rem', marginBottom: '0.3rem' }}>ID: {perfAskPair.asker.student_id}</div>
+                                      <div style={{ color: '#fdcb6e', fontSize: '1.2rem', marginBottom: '0.3rem' }}>{perfAskPair.asker.thai_name || '—'}</div>
+                                      <div style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 800, marginBottom: '1rem', textShadow: '0 0 20px rgba(253,203,110,0.5)' }}>{perfAskPair.asker.english_name}</div>
+                                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center', marginBottom: '0.8rem' }}>
+                                        <input type="number" placeholder="Score" value={perfAskScores.askerScore} onChange={e => setPerfAskScores(prev => ({ ...prev, askerScore: e.target.value }))} style={{ width: 100, textAlign: 'center', fontSize: '1.2rem' }} />
+                                        <button onClick={() => savePerfScore(perfAskPair.asker.student_id, perfAskScores.askerScore)} className="btn btn-secondary">Save</button>
+                                      </div>
+                                      <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.answerer?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, asker: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline" style={{ color: '#fdcb6e', borderColor: 'rgba(253,203,110,0.5)', fontSize: '1rem', padding: '0.5rem 1.5rem' }}>Change Student</button>
                                     </div>
-                                    <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.answerer?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, asker: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline btn-sm" style={{ marginTop: '0.5rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>Change</button>
-                                  </div>
-                                  {/* Answerer card */}
-                                  <div style={{ background: 'linear-gradient(135deg, #0984e3, #6c5ce7)', borderRadius: 12, padding: '1.5rem 2rem', minWidth: 350, textAlign: 'center', border: '2px solid #00cec9' }}>
-                                    <div style={{ color: '#00cec9', fontSize: '0.8rem', marginBottom: '0.3rem' }}>WILL ANSWER</div>
-                                    <div style={{ color: '#fff', fontSize: '0.8rem' }}>ID: {perfAskPair.answerer.student_id}</div>
-                                    <div style={{ color: '#74b9ff', fontSize: '0.85rem' }}>{perfAskPair.answerer.thai_name || '—'}</div>
-                                    <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.5rem' }}>{perfAskPair.answerer.english_name}</div>
-                                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', justifyContent: 'center' }}>
-                                      <input type="number" placeholder="Score" value={perfAskScores.answererScore} onChange={e => setPerfAskScores(prev => ({ ...prev, answererScore: e.target.value }))} style={{ width: 80, textAlign: 'center' }} />
-                                      <button onClick={() => savePerfScore(perfAskPair.answerer.student_id, perfAskScores.answererScore)} className="btn btn-secondary btn-sm">Save</button>
+                                    {/* Answerer card - big glowing */}
+                                    <div style={{ background: 'linear-gradient(135deg, #0984e3, #6c5ce7)', borderRadius: 16, padding: '2.5rem 3rem', minWidth: 380, maxWidth: '45%', flex: 1, textAlign: 'center', border: '3px solid #00cec9', boxShadow: '0 0 40px rgba(0,206,201,0.4), inset 0 0 30px rgba(0,206,201,0.05)', animation: 'cardFlip 0.6s' }}>
+                                      <div style={{ color: '#00cec9', fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.8rem', textTransform: 'uppercase', letterSpacing: 2, animation: 'glowPulse 3s infinite' }}>WILL ANSWER</div>
+                                      <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1rem', marginBottom: '0.3rem' }}>ID: {perfAskPair.answerer.student_id}</div>
+                                      <div style={{ color: '#74b9ff', fontSize: '1.2rem', marginBottom: '0.3rem' }}>{perfAskPair.answerer.thai_name || '—'}</div>
+                                      <div style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 800, marginBottom: '1rem', textShadow: '0 0 20px rgba(0,206,201,0.5)' }}>{perfAskPair.answerer.english_name}</div>
+                                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center', marginBottom: '0.8rem' }}>
+                                        <input type="number" placeholder="Score" value={perfAskScores.answererScore} onChange={e => setPerfAskScores(prev => ({ ...prev, answererScore: e.target.value }))} style={{ width: 100, textAlign: 'center', fontSize: '1.2rem' }} />
+                                        <button onClick={() => savePerfScore(perfAskPair.answerer.student_id, perfAskScores.answererScore)} className="btn btn-secondary">Save</button>
+                                      </div>
+                                      <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.asker?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, answerer: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline" style={{ color: '#00cec9', borderColor: 'rgba(0,206,201,0.5)', fontSize: '1rem', padding: '0.5rem 1.5rem' }}>Change Student</button>
                                     </div>
-                                    <button onClick={() => { const avail = perfStudents.filter(s => !perfScoredStudents.has(s.student_id) && s.student_id !== perfAskPair.asker?.student_id); if (avail.length === 0) { showToast('No more students'); return; } setPerfAskPair(prev => ({ ...prev, answerer: avail[Math.floor(Math.random() * avail.length)] })); }} className="btn btn-outline btn-sm" style={{ marginTop: '0.5rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>Change</button>
                                   </div>
-                                  <button onClick={selectRandomPair} className="btn btn-primary" style={{ marginTop: '0.5rem' }}>Select Next Pair</button>
+                                  <button onClick={selectRandomPair} className="btn btn-primary" style={{ fontSize: '1.2rem', padding: '0.8rem 2.5rem', boxShadow: '0 0 25px rgba(108,92,231,0.4)' }}>Select Next Pair</button>
                                 </>
                               )}
                             </div>
                           )}
 
-                          {/* REVEAL ME - Shuffle and reveal */}
+                          {/* REVEAL ME - Shuffle and reveal - BIG */}
                           {perfActiveGame.performance_type === 'REVEAL_ME' && (
-                            <div style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(70vh - 120px)' }}>
                               {!perfFlippedCard && !isSpinning && (
-                                <button onClick={shuffleRevealStudent} className="btn btn-primary" style={{ fontSize: '1.2rem', padding: '0.8rem 2.5rem' }} disabled={perfStudents.filter(s => !perfScoredStudents.has(s.student_id)).length === 0}>
+                                <button onClick={shuffleRevealStudent} className="btn btn-primary" style={{ fontSize: '1.8rem', padding: '1.2rem 3.5rem', boxShadow: '0 0 40px rgba(108,92,231,0.5)', animation: 'glowPulse 2s infinite' }} disabled={perfStudents.filter(s => !perfScoredStudents.has(s.student_id)).length === 0}>
                                   Shuffle & Reveal
                                 </button>
                               )}
                               {isSpinning && perfFlippedCard && (
-                                <div style={{ animation: 'cardFlip 0.3s', background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '2rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)' }}>
-                                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#00cec9' }}>{perfFlippedCard.english_name || perfFlippedCard.student_id}</div>
+                                <div style={{ animation: 'cardFlip 0.3s', background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 20, padding: '3rem 4rem', display: 'inline-block', border: '3px solid rgba(0,206,201,0.6)', boxShadow: '0 0 60px rgba(0,206,201,0.4), 0 0 100px rgba(108,92,231,0.2)', minWidth: 450 }}>
+                                  <div style={{ fontSize: '3rem', fontWeight: 800, color: '#00cec9', textShadow: '0 0 30px rgba(0,206,201,0.8)', animation: 'glowPulse 0.5s infinite' }}>{perfFlippedCard.english_name || perfFlippedCard.student_id}</div>
                                 </div>
                               )}
                               {!isSpinning && perfFlippedCard && (
-                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '2.5rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)', minWidth: 300 }}>
-                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem' }}>ID: {perfFlippedCard.student_id}</div>
-                                  <div style={{ color: '#fdcb6e', fontSize: '0.9rem' }}>{perfFlippedCard.thai_name || '—'}</div>
-                                  <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem' }}>{perfFlippedCard.english_name}</div>
-                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
-                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 80, textAlign: 'center', fontSize: '1.2rem' }} />
-                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary">Save</button>
+                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 20, padding: '3.5rem 4rem', display: 'inline-block', border: '3px solid rgba(0,206,201,0.6)', minWidth: 500, boxShadow: '0 0 50px rgba(0,206,201,0.3), 0 0 100px rgba(108,92,231,0.2)', animation: 'cardFlip 0.6s' }}>
+                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1.1rem', marginBottom: '0.5rem' }}>ID: {perfFlippedCard.student_id}</div>
+                                  <div style={{ color: '#fdcb6e', fontSize: '1.3rem', marginBottom: '0.3rem' }}>{perfFlippedCard.thai_name || '—'}</div>
+                                  <div style={{ color: '#fff', fontSize: '2.8rem', fontWeight: 800, marginBottom: '1.5rem', textShadow: '0 0 25px rgba(0,206,201,0.6)' }}>{perfFlippedCard.english_name}</div>
+                                  <div style={{ display: 'flex', gap: '0.8rem', justifyContent: 'center', alignItems: 'center', marginBottom: '1rem' }}>
+                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 120, textAlign: 'center', fontSize: '1.5rem' }} />
+                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.6rem 1.5rem' }}>Save</button>
                                   </div>
-                                  <button onClick={shuffleRevealStudent} className="btn btn-outline btn-sm" style={{ marginTop: '1rem', color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>SHUFFLE AGAIN</button>
+                                  <button onClick={shuffleRevealStudent} className="btn btn-outline" style={{ color: '#00cec9', borderColor: 'rgba(0,206,201,0.5)', fontSize: '1.1rem', padding: '0.6rem 2rem' }}>SHUFFLE AGAIN</button>
                                 </div>
                               )}
                             </div>
                           )}
 
-                          {/* STUDENT ROULETTE - Spinning wheel */}
+                          {/* STUDENT ROULETTE - Spinning wheel - BIG */}
                           {perfActiveGame.performance_type === 'STUDENT_ROULETTE' && (
-                            <div style={{ textAlign: 'center' }}>
-                              <div style={{ position: 'relative', width: 300, height: 300, margin: '0 auto 1.5rem', borderRadius: '50%', overflow: 'hidden', border: '3px solid rgba(0,206,201,0.5)', background: 'rgba(0,0,0,0.3)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(70vh - 120px)' }}>
+                              <div style={{ position: 'relative', width: 'min(500px, 60vh)', height: 'min(500px, 60vh)', margin: '0 auto 2rem', borderRadius: '50%', overflow: 'hidden', border: '4px solid rgba(0,206,201,0.6)', background: 'rgba(0,0,0,0.3)', boxShadow: '0 0 50px rgba(0,206,201,0.3), 0 0 100px rgba(108,92,231,0.2)' }}>
                                 {perfStudents.filter(s => !perfScoredStudents.has(s.student_id)).slice(0, 12).map((s, i, arr) => {
                                   const angle = (360 / arr.length) * i;
                                   const colors = ['#6c5ce7','#00cec9','#fd79a8','#fdcb6e','#55efc4','#74b9ff','#e17055','#a29bfe'];
                                   return (
                                     <div key={s.student_id} style={{ position: 'absolute', width: '50%', height: '50%', transformOrigin: '100% 100%', transform: `rotate(${angle}deg)`, background: colors[i % colors.length], opacity: 0.85 }}>
-                                      <span style={{ position: 'absolute', top: 4, right: 4, fontSize: '0.55rem', color: '#fff', fontWeight: 700, transform: `rotate(${-angle}deg)` }}>{(s.english_name || s.student_id).substring(0, 8)}</span>
+                                      <span style={{ position: 'absolute', top: 8, right: 8, fontSize: '0.75rem', color: '#fff', fontWeight: 700, transform: `rotate(${-angle}deg)` }}>{(s.english_name || s.student_id).substring(0, 10)}</span>
                                     </div>
                                   );
                                 })}
-                                <div style={{ position: 'absolute', inset: '30%', borderRadius: '50%', background: 'rgba(10,10,46,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, border: '2px solid rgba(0,206,201,0.3)' }}>
-                                  {perfFlippedCard && !isSpinning ? <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#00cec9', textAlign: 'center' }}>{(perfFlippedCard.english_name || '').substring(0, 12)}</span> : <span style={{ fontSize: '2rem' }}>🎡</span>}
+                                <div style={{ position: 'absolute', inset: '28%', borderRadius: '50%', background: 'rgba(10,10,46,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, border: '3px solid rgba(0,206,201,0.4)', boxShadow: '0 0 30px rgba(0,206,201,0.3)' }}>
+                                  {perfFlippedCard && !isSpinning ? <span style={{ fontSize: '1rem', fontWeight: 800, color: '#00cec9', textAlign: 'center', textShadow: '0 0 10px rgba(0,206,201,0.8)' }}>{(perfFlippedCard.english_name || '').substring(0, 14)}</span> : <span style={{ fontSize: '3rem' }}>🎡</span>}
                                 </div>
                                 {/* Arrow */}
-                                <div style={{ position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderTop: '16px solid #e17055', zIndex: 3 }} />
+                                <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '14px solid transparent', borderRight: '14px solid transparent', borderTop: '22px solid #e17055', zIndex: 3, filter: 'drop-shadow(0 0 8px rgba(225,112,85,0.6))' }} />
                               </div>
                               {perfFlippedCard && !isSpinning && (
-                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 16, padding: '1.5rem', display: 'inline-block', border: '2px solid rgba(0,206,201,0.5)', minWidth: 280, marginBottom: '1rem' }}>
-                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem' }}>ID: {perfFlippedCard.student_id}</div>
-                                  <div style={{ color: '#fdcb6e' }}>{perfFlippedCard.thai_name || '—'}</div>
-                                  <div style={{ color: '#fff', fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem' }}>{perfFlippedCard.english_name}</div>
-                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
-                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 80, textAlign: 'center' }} />
-                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary btn-sm">Save</button>
+                                <div style={{ background: 'linear-gradient(145deg, #1a1a3e, #2a2a5e)', borderRadius: 20, padding: '2.5rem 3rem', display: 'inline-block', border: '3px solid rgba(0,206,201,0.6)', minWidth: 400, marginBottom: '1.5rem', boxShadow: '0 0 40px rgba(0,206,201,0.3)', animation: 'cardFlip 0.6s' }}>
+                                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1rem' }}>ID: {perfFlippedCard.student_id}</div>
+                                  <div style={{ color: '#fdcb6e', fontSize: '1.2rem' }}>{perfFlippedCard.thai_name || '—'}</div>
+                                  <div style={{ color: '#fff', fontSize: '2.2rem', fontWeight: 800, marginBottom: '1rem', textShadow: '0 0 20px rgba(0,206,201,0.5)' }}>{perfFlippedCard.english_name}</div>
+                                  <div style={{ display: 'flex', gap: '0.8rem', justifyContent: 'center', alignItems: 'center' }}>
+                                    <input type="number" value={perfCardScore} onChange={e => setPerfCardScore(e.target.value)} placeholder="Score" style={{ width: 110, textAlign: 'center', fontSize: '1.3rem' }} />
+                                    <button onClick={() => { savePerfScore(perfFlippedCard.student_id, perfCardScore); setPerfFlippedCard(null); setPerfCardScore(''); }} className="btn btn-primary" style={{ fontSize: '1.1rem' }}>Save</button>
                                   </div>
                                 </div>
                               )}
                               <div>
-                                <button onClick={shuffleRevealStudent} disabled={isSpinning} className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '0.7rem 2rem' }}>
+                                <button onClick={shuffleRevealStudent} disabled={isSpinning} className="btn btn-primary" style={{ fontSize: '1.3rem', padding: '0.9rem 2.5rem', boxShadow: '0 0 25px rgba(108,92,231,0.4)' }}>
                                   {isSpinning ? 'Spinning...' : 'SPIN AGAIN'}
                                 </button>
                               </div>
